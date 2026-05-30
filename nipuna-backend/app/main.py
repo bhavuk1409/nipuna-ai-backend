@@ -88,3 +88,6 @@ async def root() -> dict[str, str]:
 @app.get("/health", tags=["system"])
 async def health_check() -> dict[str, str]:
     return {"status": "ok", "env": settings.env}
+
+
+# CI/CD trigger comment
