@@ -1,0 +1,21 @@
+# Python virtual environment and cache
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Node dependencies and build output
+node_modules/
+dist/
+.output/
+.vercel/
+cdk.out/
+
+# Environment configurations and secrets
+.env
+.env.local
+.dev_vars
+
+# OS specific files
+.DS_Store
+Thumbs.db

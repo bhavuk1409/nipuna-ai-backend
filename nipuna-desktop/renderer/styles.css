@@ -1,0 +1,376 @@
+/* ─── Google Fonts ─────────────────────────────────────────────────────────── */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Geist:wght@400;500;600;700&display=swap');
+
+/* ─── Reset & Base ──────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:           #f7f7f4; /* Warm background matching frontend */
+  --surface:      #ffffff; /* White card surface */
+  --surface-2:    #fafafa; /* Slightly darker raised surface */
+  --border:       rgba(0, 0, 0, 0.06); /* Elegant hairline border */
+  --border-strong:rgba(0, 0, 0, 0.12); /* Subtle outline */
+  --accent:       #101012; /* Dark primary brand accent */
+  --accent-light: #2c2c30;
+  --text:         #0f0f10; /* Clean dark text */
+  --text-muted:   #6b6b70; /* Elegant gray muted text */
+  --green:        #10b981; /* Safe success emerald green */
+  --green-dim:    rgba(16, 185, 129, 0.06);
+  --red:          #dc2626;
+  --red-dim:      rgba(220, 38, 38, 0.06);
+  --yellow:       #ea580c;
+  --yellow-dim:   rgba(234, 88, 12, 0.06);
+  --radius:       8px;
+  --shadow:       0 1px 3px rgba(0, 0, 0, 0.04), 0 10px 24px -10px rgba(0, 0, 0, 0.04);
+}
+
+html, body {
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: 13px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ─── Shell ─────────────────────────────────────────────────────────────────── */
+.shell {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  padding: 16px;
+  gap: 12px;
+  overflow: hidden;
+}
+
+/* ─── Header ────────────────────────────────────────────────────────────────── */
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.brand-logo {
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  object-fit: cover;
+  border: 1px solid var(--border);
+}
+
+.brand h1 {
+  font-family: 'Geist', sans-serif;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.03em;
+  line-height: 1.2;
+}
+
+.brand-sub {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* Status Badge */
+.status-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 100px;
+  font-size: 11px;
+  font-weight: 500;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  transition: background 0.3s ease, box-shadow 0.3s ease;
+}
+
+.status-badge[data-status="connected"] {
+  border-color: rgba(16, 185, 129, 0.2);
+  background: var(--green-dim);
+  color: var(--green);
+}
+.status-badge[data-status="connected"] .status-dot {
+  background: var(--green);
+  box-shadow: 0 0 6px var(--green);
+}
+
+.status-badge[data-status="connecting"] .status-dot,
+.status-badge[data-status="authenticating"] .status-dot {
+  background: var(--yellow);
+  animation: pulse 1s ease-in-out infinite;
+}
+
+.status-badge[data-status="error"] {
+  border-color: rgba(220, 38, 38, 0.2);
+  background: var(--red-dim);
+  color: var(--red);
+}
+.status-badge[data-status="error"] .status-dot {
+  background: var(--red);
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.9); }
+}
+
+/* ─── Status Panel ──────────────────────────────────────────────────────────── */
+.status-panel {
+  padding: 12px 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-muted);
+  font-size: 12px;
+  box-shadow: var(--shadow);
+  text-align: left;
+  line-height: 1.4;
+  animation: slideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ─── Service Cards ─────────────────────────────────────────────────────────── */
+.services {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.service-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  transition: border-color 0.2s ease, transform 0.2s ease;
+}
+
+.service-card:hover {
+  border-color: var(--border-strong);
+}
+
+.service-icon {
+  width: 28px;
+  height: 28px;
+  background: var(--bg);
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+}
+
+.service-icon svg {
+  width: 14px;
+  height: 14px;
+  color: var(--text-muted);
+  transition: color 0.2s ease, transform 0.2s ease;
+}
+
+.service-card:hover .service-icon svg {
+  color: var(--text);
+  transform: scale(1.05);
+}
+
+.service-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.service-name {
+  font-family: 'Geist', sans-serif;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  letter-spacing: -0.02em;
+}
+
+.service-state {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.service-indicator {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.1);
+  flex-shrink: 0;
+  transition: all 0.3s ease;
+}
+
+.service-indicator[data-active="true"] {
+  background: var(--green);
+  box-shadow: 0 0 8px rgba(22, 163, 74, 0.4);
+}
+
+/* ─── Actions ───────────────────────────────────────────────────────────────── */
+.actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: auto;
+}
+
+.btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  padding: 11px 16px;
+  border-radius: 6px;
+  font-family: 'Geist', sans-serif;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  border: none;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  letter-spacing: -0.01em;
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: var(--accent);
+  color: var(--surface);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--accent-light);
+  transform: translateY(-0.5px);
+}
+
+.btn-primary:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+}
+
+.btn-ghost:hover:not(:disabled) {
+  background: var(--surface-2);
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+.btn-icon {
+  font-style: normal;
+  font-size: 14px;
+}
+
+/* ─── Error Box ─────────────────────────────────────────────────────────────── */
+.error-box {
+  padding: 10px 14px;
+  background: var(--red-dim);
+  border: 1px solid rgba(220, 38, 38, 0.15);
+  border-radius: var(--radius);
+  color: var(--red);
+  font-size: 11px;
+  line-height: 1.4;
+  margin-bottom: 4px;
+}
+
+/* ─── Footer ────────────────────────────────────────────────────────────────── */
+.app-footer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 4px 10px;
+  font-size: 10px;
+  color: var(--text-muted);
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+}
+
+.app-footer strong {
+  color: var(--text);
+  font-weight: 500;
+}
+
+/* ─── Diagnostics Details Collapsible Section ──────────────────────────────── */
+.diagnostics-details {
+  margin-top: 8px;
+  border-top: 1px dashed var(--border);
+  padding-top: 10px;
+}
+
+.diagnostics-details summary {
+  font-family: 'Geist', sans-serif;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+  outline: none;
+  text-align: center;
+  list-style: none; /* Hide default arrow */
+  display: block;
+  transition: color 0.2s ease;
+}
+
+.diagnostics-details summary::-webkit-details-marker {
+  display: none; /* Hide Safari/Chrome arrow */
+}
+
+.diagnostics-details summary:hover {
+  color: var(--text);
+}
+
+.diagnostics-details summary::after {
+  content: " ▾";
+  font-size: 9px;
+  vertical-align: middle;
+}
+
+.diagnostics-details[open] summary::after {
+  content: " ▴";
+}
+
+.diagnostics-content {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}

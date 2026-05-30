@@ -1,0 +1,160 @@
+{
+  "/EcrStack": [
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "<anonymous> (/Users/bhavukagrawal/nipuna-ai-backend/infrastructure/bin/app.ts:35:18)",
+        "...node internals, ts-node, ts-node..."
+      ]
+    }
+  ],
+  "/EcrStack/ApiRepoUri": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ApiRepoUri"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "new EcrStack (/Users/bhavukagrawal/nipuna-ai-backend/infrastructure/lib/ecr-stack.ts:34:5)",
+        "<anonymous> (/Users/bhavukagrawal/nipuna-ai-backend/infrastructure/bin/app.ts:35:18)",
+        "...node internals, ts-node, ts-node..."
+      ]
+    }
+  ],
+  "/EcrStack/WorkerRepoUri": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "WorkerRepoUri"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "new EcrStack (/Users/bhavukagrawal/nipuna-ai-backend/infrastructure/lib/ecr-stack.ts:38:5)",
+        "<anonymous> (/Users/bhavukagrawal/nipuna-ai-backend/infrastructure/bin/app.ts:35:18)",
+        "...node internals, ts-node, ts-node..."
+      ]
+    }
+  ],
+  "/EcrStack/BootstrapVersion": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "BootstrapVersion"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...aws-cdk-lib...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/EcrStack/CheckBootstrapVersion": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "CheckBootstrapVersion"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...aws-cdk-lib...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/EcrStack/NipunaApiRepo/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "NipunaApiRepoA0666868"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new Repository2 in aws-cdk-lib...",
+        "new EcrStack (/Users/bhavukagrawal/nipuna-ai-backend/infrastructure/lib/ecr-stack.ts:12:20)",
+        "<anonymous> (/Users/bhavukagrawal/nipuna-ai-backend/infrastructure/bin/app.ts:35:18)",
+        "...node internals, ts-node, ts-node..."
+      ]
+    }
+  ],
+  "/EcrStack/NipunaWorkerRepo/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "NipunaWorkerRepoA2F985B4"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new Repository2 in aws-cdk-lib...",
+        "new EcrStack (/Users/bhavukagrawal/nipuna-ai-backend/infrastructure/lib/ecr-stack.ts:23:23)",
+        "<anonymous> (/Users/bhavukagrawal/nipuna-ai-backend/infrastructure/bin/app.ts:35:18)",
+        "...node internals, ts-node, ts-node..."
+      ]
+    }
+  ],
+  "/EcrStack/CDKMetadata/Default": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "CDKMetadata"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...aws-cdk-lib, node internals...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/EcrStack/Exports/Output{\"Fn::GetAtt\":[\"NipunaApiRepoA0666868\",\"Arn\"]}": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ExportsOutputFnGetAttNipunaApiRepoA0666868ArnA6A45425"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...aws-cdk-lib, node internals...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/EcrStack/Exports/Output{\"Fn::GetAtt\":[\"NipunaWorkerRepoA2F985B4\",\"Arn\"]}": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ExportsOutputFnGetAttNipunaWorkerRepoA2F985B4Arn18DAF65F"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...aws-cdk-lib, node internals...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/EcrStack/Exports/Output{\"Ref\":\"NipunaApiRepoA0666868\"}": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ExportsOutputRefNipunaApiRepoA06668689C9195D3"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...aws-cdk-lib, node internals...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/EcrStack/Exports/Output{\"Ref\":\"NipunaWorkerRepoA2F985B4\"}": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ExportsOutputRefNipunaWorkerRepoA2F985B4A76576A3"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...aws-cdk-lib, node internals...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ]
+}

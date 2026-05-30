@@ -1,0 +1,133 @@
+{
+  "/OpenSearchStack": [
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "<anonymous> (/Users/bhavukagrawal/nipuna-ai-backend/infrastructure/bin/app.ts:30:25)",
+        "...node internals, ts-node, ts-node..."
+      ]
+    }
+  ],
+  "/OpenSearchStack/NipunaVectors": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "NipunaVectors"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "new OpenSearchStack (/Users/bhavukagrawal/nipuna-ai-backend/infrastructure/lib/opensearch-stack.ts:17:24)",
+        "<anonymous> (/Users/bhavukagrawal/nipuna-ai-backend/infrastructure/bin/app.ts:30:25)",
+        "...node internals, ts-node, ts-node..."
+      ]
+    }
+  ],
+  "/OpenSearchStack/VectorEncryptionPolicy": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "VectorEncryptionPolicy"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "new OpenSearchStack (/Users/bhavukagrawal/nipuna-ai-backend/infrastructure/lib/opensearch-stack.ts:22:30)",
+        "<anonymous> (/Users/bhavukagrawal/nipuna-ai-backend/infrastructure/bin/app.ts:30:25)",
+        "...node internals, ts-node, ts-node..."
+      ]
+    }
+  ],
+  "/OpenSearchStack/VectorNetworkPolicy": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "VectorNetworkPolicy"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "new OpenSearchStack (/Users/bhavukagrawal/nipuna-ai-backend/infrastructure/lib/opensearch-stack.ts:36:27)",
+        "<anonymous> (/Users/bhavukagrawal/nipuna-ai-backend/infrastructure/bin/app.ts:30:25)",
+        "...node internals, ts-node, ts-node..."
+      ]
+    }
+  ],
+  "/OpenSearchStack/VectorDataAccessPolicy": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "VectorDataAccessPolicy"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "new OpenSearchStack (/Users/bhavukagrawal/nipuna-ai-backend/infrastructure/lib/opensearch-stack.ts:52:30)",
+        "<anonymous> (/Users/bhavukagrawal/nipuna-ai-backend/infrastructure/bin/app.ts:30:25)",
+        "...node internals, ts-node, ts-node..."
+      ]
+    }
+  ],
+  "/OpenSearchStack/CollectionEndpoint": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "CollectionEndpoint"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "new OpenSearchStack (/Users/bhavukagrawal/nipuna-ai-backend/infrastructure/lib/opensearch-stack.ts:97:5)",
+        "<anonymous> (/Users/bhavukagrawal/nipuna-ai-backend/infrastructure/bin/app.ts:30:25)",
+        "...node internals, ts-node, ts-node..."
+      ]
+    }
+  ],
+  "/OpenSearchStack/BootstrapVersion": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "BootstrapVersion"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...aws-cdk-lib...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/OpenSearchStack/CheckBootstrapVersion": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "CheckBootstrapVersion"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...aws-cdk-lib...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/OpenSearchStack/CDKMetadata/Default": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "CDKMetadata"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...aws-cdk-lib, node internals...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/OpenSearchStack/Exports/Output{\"Fn::GetAtt\":[\"NipunaVectors\",\"CollectionEndpoint\"]}": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ExportsOutputFnGetAttNipunaVectorsCollectionEndpointAD597528"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...aws-cdk-lib, node internals...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ]
+}

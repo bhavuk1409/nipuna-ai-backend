@@ -1,0 +1,142 @@
+{
+ "Resources": {
+  "RedisSecurityGroupB05951F6": {
+   "Type": "AWS::EC2::SecurityGroup",
+   "Properties": {
+    "GroupDescription": "ElastiCacheStack/RedisSecurityGroup",
+    "SecurityGroupEgress": [
+     {
+      "CidrIp": "0.0.0.0/0",
+      "Description": "Allow all outbound traffic by default",
+      "IpProtocol": "-1"
+     }
+    ],
+    "VpcId": {
+     "Fn::ImportValue": "VpcStack:ExportsOutputRefNipunaVpc05A6592F24A3380F"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "ElastiCacheStack/RedisSecurityGroup/Resource"
+   }
+  },
+  "RedisSubnetGroup": {
+   "Type": "AWS::ElastiCache::SubnetGroup",
+   "Properties": {
+    "Description": "Subnet group for ElastiCache Redis",
+    "SubnetIds": [
+     {
+      "Fn::ImportValue": "VpcStack:ExportsOutputRefNipunaVpcisolatedSubnet1SubnetC9E6E261FEB0E74E"
+     },
+     {
+      "Fn::ImportValue": "VpcStack:ExportsOutputRefNipunaVpcisolatedSubnet2SubnetB684A8F2AD176A7C"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "ElastiCacheStack/RedisSubnetGroup"
+   }
+  },
+  "NipunaRedis": {
+   "Type": "AWS::ElastiCache::CacheCluster",
+   "Properties": {
+    "AutoMinorVersionUpgrade": true,
+    "CacheNodeType": "cache.t3.micro",
+    "CacheSubnetGroupName": {
+     "Ref": "RedisSubnetGroup"
+    },
+    "Engine": "redis",
+    "EngineVersion": "7.0",
+    "NumCacheNodes": 1,
+    "VpcSecurityGroupIds": [
+     {
+      "Fn::GetAtt": [
+       "RedisSecurityGroupB05951F6",
+       "GroupId"
+      ]
+     }
+    ]
+   },
+   "DependsOn": [
+    "RedisSubnetGroup"
+   ],
+   "Metadata": {
+    "aws:cdk:path": "ElastiCacheStack/NipunaRedis"
+   }
+  },
+  "CDKMetadata": {
+   "Type": "AWS::CDK::Metadata",
+   "Properties": {
+    "Analytics": "v2:deflate64:H4sIAAAAAAAA/1WKQQrCMBAA39J7spYF8QE5eBTsAyRNV0wb05LsWiTk7xIEwdPAzCDg8QR9Z/es3bTo4EcoA1u3KLvnWyGHUAZykjy/z2mVTZl7/BNVUbCZvbPuQVBaljES/27TggmSmVKtzVyEN+Gq4joRzPnwQgRE6Ls5e6+TRPZPguuXHzXtXrSjAAAA"
+   },
+   "Metadata": {
+    "aws:cdk:path": "ElastiCacheStack/CDKMetadata/Default"
+   }
+  }
+ },
+ "Outputs": {
+  "RedisEndpoint": {
+   "Value": {
+    "Fn::GetAtt": [
+     "NipunaRedis",
+     "RedisEndpoint.Address"
+    ]
+   }
+  },
+  "ExportsOutputFnGetAttRedisSecurityGroupB05951F6GroupIdECA64B37": {
+   "Value": {
+    "Fn::GetAtt": [
+     "RedisSecurityGroupB05951F6",
+     "GroupId"
+    ]
+   },
+   "Export": {
+    "Name": "ElastiCacheStack:ExportsOutputFnGetAttRedisSecurityGroupB05951F6GroupIdECA64B37"
+   }
+  },
+  "ExportsOutputFnGetAttNipunaRedisRedisEndpointAddress954C8FD8": {
+   "Value": {
+    "Fn::GetAtt": [
+     "NipunaRedis",
+     "RedisEndpoint.Address"
+    ]
+   },
+   "Export": {
+    "Name": "ElastiCacheStack:ExportsOutputFnGetAttNipunaRedisRedisEndpointAddress954C8FD8"
+   }
+  }
+ },
+ "Parameters": {
+  "BootstrapVersion": {
+   "Type": "AWS::SSM::Parameter::Value<String>",
+   "Default": "/cdk-bootstrap/hnb659fds/version",
+   "Description": "Version of the CDK Bootstrap resources in this environment, automatically retrieved from SSM Parameter Store. [cdk:skip]"
+  }
+ },
+ "Rules": {
+  "CheckBootstrapVersion": {
+   "Assertions": [
+    {
+     "Assert": {
+      "Fn::Not": [
+       {
+        "Fn::Contains": [
+         [
+          "1",
+          "2",
+          "3",
+          "4",
+          "5"
+         ],
+         {
+          "Ref": "BootstrapVersion"
+         }
+        ]
+       }
+      ]
+     },
+     "AssertDescription": "CDK bootstrap stack version 6 required. Please run 'cdk bootstrap' with a recent version of the CDK CLI."
+    }
+   ]
+  }
+ }
+}

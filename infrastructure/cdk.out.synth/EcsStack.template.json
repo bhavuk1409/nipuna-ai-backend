@@ -1,0 +1,899 @@
+{
+ "Resources": {
+  "NipunaCluster704EC85F": {
+   "Type": "AWS::ECS::Cluster",
+   "Properties": {
+    "ClusterSettings": [
+     {
+      "Name": "containerInsights",
+      "Value": "enabled"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "EcsStack/NipunaCluster/Resource"
+   }
+  },
+  "AlbSg1155C1BE": {
+   "Type": "AWS::EC2::SecurityGroup",
+   "Properties": {
+    "GroupDescription": "EcsStack/AlbSg",
+    "SecurityGroupEgress": [
+     {
+      "CidrIp": "0.0.0.0/0",
+      "Description": "Allow all outbound traffic by default",
+      "IpProtocol": "-1"
+     }
+    ],
+    "SecurityGroupIngress": [
+     {
+      "CidrIp": "0.0.0.0/0",
+      "Description": "from 0.0.0.0/0:80",
+      "FromPort": 80,
+      "IpProtocol": "tcp",
+      "ToPort": 80
+     }
+    ],
+    "VpcId": {
+     "Fn::ImportValue": "VpcStack:ExportsOutputRefNipunaVpc05A6592F24A3380F"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "EcsStack/AlbSg/Resource"
+   }
+  },
+  "EcsSg17B4B0B3": {
+   "Type": "AWS::EC2::SecurityGroup",
+   "Properties": {
+    "GroupDescription": "EcsStack/EcsSg",
+    "SecurityGroupEgress": [
+     {
+      "CidrIp": "0.0.0.0/0",
+      "Description": "Allow all outbound traffic by default",
+      "IpProtocol": "-1"
+     }
+    ],
+    "VpcId": {
+     "Fn::ImportValue": "VpcStack:ExportsOutputRefNipunaVpc05A6592F24A3380F"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "EcsStack/EcsSg/Resource"
+   }
+  },
+  "EcsSgfromEcsStackAlbSg2C770DCA8000AC522F5A": {
+   "Type": "AWS::EC2::SecurityGroupIngress",
+   "Properties": {
+    "Description": "from EcsStackAlbSg2C770DCA:8000",
+    "FromPort": 8000,
+    "GroupId": {
+     "Fn::GetAtt": [
+      "EcsSg17B4B0B3",
+      "GroupId"
+     ]
+    },
+    "IpProtocol": "tcp",
+    "SourceSecurityGroupId": {
+     "Fn::GetAtt": [
+      "AlbSg1155C1BE",
+      "GroupId"
+     ]
+    },
+    "ToPort": 8000
+   },
+   "Metadata": {
+    "aws:cdk:path": "EcsStack/EcsSg/from EcsStackAlbSg2C770DCA:8000"
+   }
+  },
+  "RdsEcsIngress": {
+   "Type": "AWS::EC2::SecurityGroupIngress",
+   "Properties": {
+    "FromPort": 5432,
+    "GroupId": {
+     "Fn::ImportValue": "VpcStack:ExportsOutputFnGetAttRdsSecurityGroup632A77E4GroupId9D343172"
+    },
+    "IpProtocol": "tcp",
+    "SourceSecurityGroupId": {
+     "Fn::GetAtt": [
+      "EcsSg17B4B0B3",
+      "GroupId"
+     ]
+    },
+    "ToPort": 5432
+   },
+   "Metadata": {
+    "aws:cdk:path": "EcsStack/RdsEcsIngress"
+   }
+  },
+  "RedisEcsIngress": {
+   "Type": "AWS::EC2::SecurityGroupIngress",
+   "Properties": {
+    "FromPort": 6379,
+    "GroupId": {
+     "Fn::ImportValue": "ElastiCacheStack:ExportsOutputFnGetAttRedisSecurityGroupB05951F6GroupIdECA64B37"
+    },
+    "IpProtocol": "tcp",
+    "SourceSecurityGroupId": {
+     "Fn::GetAtt": [
+      "EcsSg17B4B0B3",
+      "GroupId"
+     ]
+    },
+    "ToPort": 6379
+   },
+   "Metadata": {
+    "aws:cdk:path": "EcsStack/RedisEcsIngress"
+   }
+  },
+  "NipunaAlb9E2FB782": {
+   "Type": "AWS::ElasticLoadBalancingV2::LoadBalancer",
+   "Properties": {
+    "LoadBalancerAttributes": [
+     {
+      "Key": "deletion_protection.enabled",
+      "Value": "false"
+     }
+    ],
+    "Scheme": "internet-facing",
+    "SecurityGroups": [
+     {
+      "Fn::GetAtt": [
+       "AlbSg1155C1BE",
+       "GroupId"
+      ]
+     }
+    ],
+    "Subnets": [
+     {
+      "Fn::ImportValue": "VpcStack:ExportsOutputRefNipunaVpcpublicSubnet1Subnet14D7F154E8FD32AC"
+     },
+     {
+      "Fn::ImportValue": "VpcStack:ExportsOutputRefNipunaVpcpublicSubnet2Subnet9952C312ECC6886A"
+     }
+    ],
+    "Type": "application"
+   },
+   "Metadata": {
+    "aws:cdk:path": "EcsStack/NipunaAlb/Resource"
+   }
+  },
+  "NipunaAlbHttpListenerB6A479DD": {
+   "Type": "AWS::ElasticLoadBalancingV2::Listener",
+   "Properties": {
+    "DefaultActions": [
+     {
+      "TargetGroupArn": {
+       "Ref": "NipunaAlbHttpListenerApiTargetGroup85261274"
+      },
+      "Type": "forward"
+     }
+    ],
+    "LoadBalancerArn": {
+     "Ref": "NipunaAlb9E2FB782"
+    },
+    "Port": 80,
+    "Protocol": "HTTP"
+   },
+   "Metadata": {
+    "aws:cdk:path": "EcsStack/NipunaAlb/HttpListener/Resource"
+   }
+  },
+  "NipunaAlbHttpListenerApiTargetGroup85261274": {
+   "Type": "AWS::ElasticLoadBalancingV2::TargetGroup",
+   "Properties": {
+    "HealthCheckIntervalSeconds": 30,
+    "HealthCheckPath": "/health",
+    "HealthCheckTimeoutSeconds": 5,
+    "HealthyThresholdCount": 2,
+    "Port": 8000,
+    "Protocol": "HTTP",
+    "TargetGroupAttributes": [
+     {
+      "Key": "stickiness.enabled",
+      "Value": "false"
+     }
+    ],
+    "TargetType": "ip",
+    "UnhealthyThresholdCount": 3,
+    "VpcId": {
+     "Fn::ImportValue": "VpcStack:ExportsOutputRefNipunaVpc05A6592F24A3380F"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "EcsStack/NipunaAlb/HttpListener/ApiTargetGroup/Resource"
+   }
+  },
+  "EcsTaskRole8DFA0181": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "ecs-tasks.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "ManagedPolicyArns": [
+     {
+      "Fn::Join": [
+       "",
+       [
+        "arn:",
+        {
+         "Ref": "AWS::Partition"
+        },
+        ":iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+       ]
+      ]
+     }
+    ],
+    "RoleName": "nipuna-ecs-task-role"
+   },
+   "Metadata": {
+    "aws:cdk:path": "EcsStack/EcsTaskRole/Resource"
+   }
+  },
+  "EcsTaskRoleDefaultPolicy50882C77": {
+   "Type": "AWS::IAM::Policy",
+   "Properties": {
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": "secretsmanager:GetSecretValue",
+       "Effect": "Allow",
+       "Resource": "*"
+      },
+      {
+       "Action": "opensearchserverless:*",
+       "Effect": "Allow",
+       "Resource": "*"
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "PolicyName": "EcsTaskRoleDefaultPolicy50882C77",
+    "Roles": [
+     {
+      "Ref": "EcsTaskRole8DFA0181"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "EcsStack/EcsTaskRole/DefaultPolicy/Resource"
+   }
+  },
+  "EcsExecutionRoleFD93B7A2": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "ecs-tasks.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "ManagedPolicyArns": [
+     {
+      "Fn::Join": [
+       "",
+       [
+        "arn:",
+        {
+         "Ref": "AWS::Partition"
+        },
+        ":iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+       ]
+      ]
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "EcsStack/EcsExecutionRole/Resource"
+   }
+  },
+  "EcsExecutionRoleDefaultPolicy9114F99B": {
+   "Type": "AWS::IAM::Policy",
+   "Properties": {
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": [
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:GetDownloadUrlForLayer",
+        "ecr:BatchGetImage"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::ImportValue": "EcrStack:ExportsOutputFnGetAttNipunaApiRepoA0666868ArnA6A45425"
+       }
+      },
+      {
+       "Action": "ecr:GetAuthorizationToken",
+       "Effect": "Allow",
+       "Resource": "*"
+      },
+      {
+       "Action": [
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::GetAtt": [
+         "ApiTaskDefNipunaApiLogGroup101CC9B1",
+         "Arn"
+        ]
+       }
+      },
+      {
+       "Action": [
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:GetDownloadUrlForLayer",
+        "ecr:BatchGetImage"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::ImportValue": "EcrStack:ExportsOutputFnGetAttNipunaWorkerRepoA2F985B4Arn18DAF65F"
+       }
+      },
+      {
+       "Action": [
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::GetAtt": [
+         "WorkerTaskDefNipunaWorkerLogGroupF31B9BF7",
+         "Arn"
+        ]
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "PolicyName": "EcsExecutionRoleDefaultPolicy9114F99B",
+    "Roles": [
+     {
+      "Ref": "EcsExecutionRoleFD93B7A2"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "EcsStack/EcsExecutionRole/DefaultPolicy/Resource"
+   }
+  },
+  "ApiTaskDef37DBDBD0": {
+   "Type": "AWS::ECS::TaskDefinition",
+   "Properties": {
+    "ContainerDefinitions": [
+     {
+      "Environment": [
+       {
+        "Name": "ENV",
+        "Value": "production"
+       },
+       {
+        "Name": "AWS_SECRETS_MANAGER_SECRET_NAME",
+        "Value": "nipuna-secrets"
+       },
+       {
+        "Name": "REDIS_URL",
+        "Value": {
+         "Fn::Join": [
+          "",
+          [
+           "redis://",
+           {
+            "Fn::ImportValue": "ElastiCacheStack:ExportsOutputFnGetAttNipunaRedisRedisEndpointAddress954C8FD8"
+           },
+           ":6379/0"
+          ]
+         ]
+        }
+       },
+       {
+        "Name": "CELERY_BROKER_URL",
+        "Value": {
+         "Fn::Join": [
+          "",
+          [
+           "redis://",
+           {
+            "Fn::ImportValue": "ElastiCacheStack:ExportsOutputFnGetAttNipunaRedisRedisEndpointAddress954C8FD8"
+           },
+           ":6379/0"
+          ]
+         ]
+        }
+       },
+       {
+        "Name": "OPENSEARCH_ENDPOINT",
+        "Value": {
+         "Fn::ImportValue": "OpenSearchStack:ExportsOutputFnGetAttNipunaVectorsCollectionEndpointAD597528"
+        }
+       },
+       {
+        "Name": "DATABASE_URL",
+        "Value": {
+         "Fn::Join": [
+          "",
+          [
+           "postgresql+asyncpg://{{resolve:secretsmanager:",
+           {
+            "Fn::ImportValue": "RdsStack:ExportsOutputRefNipunaPostgresSecretAttachment6BCF441D82DD0909"
+           },
+           ":SecretString:username::}}:{{resolve:secretsmanager:",
+           {
+            "Fn::ImportValue": "RdsStack:ExportsOutputRefNipunaPostgresSecretAttachment6BCF441D82DD0909"
+           },
+           ":SecretString:password::}}@",
+           {
+            "Fn::ImportValue": "RdsStack:ExportsOutputFnGetAttNipunaPostgres57BFB72DEndpointAddress667D979C"
+           },
+           "/nipunadb"
+          ]
+         ]
+        }
+       }
+      ],
+      "Essential": true,
+      "HealthCheck": {
+       "Command": [
+        "CMD-SHELL",
+        "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""
+       ],
+       "Interval": 30,
+       "Retries": 2,
+       "StartPeriod": 20,
+       "Timeout": 5
+      },
+      "Image": {
+       "Fn::Join": [
+        "",
+        [
+         {
+          "Fn::Select": [
+           4,
+           {
+            "Fn::Split": [
+             ":",
+             {
+              "Fn::ImportValue": "EcrStack:ExportsOutputFnGetAttNipunaApiRepoA0666868ArnA6A45425"
+             }
+            ]
+           }
+          ]
+         },
+         ".dkr.ecr.",
+         {
+          "Fn::Select": [
+           3,
+           {
+            "Fn::Split": [
+             ":",
+             {
+              "Fn::ImportValue": "EcrStack:ExportsOutputFnGetAttNipunaApiRepoA0666868ArnA6A45425"
+             }
+            ]
+           }
+          ]
+         },
+         ".",
+         {
+          "Ref": "AWS::URLSuffix"
+         },
+         "/",
+         {
+          "Fn::ImportValue": "EcrStack:ExportsOutputRefNipunaApiRepoA06668689C9195D3"
+         },
+         ":latest"
+        ]
+       ]
+      },
+      "LogConfiguration": {
+       "LogDriver": "awslogs",
+       "Options": {
+        "awslogs-group": {
+         "Ref": "ApiTaskDefNipunaApiLogGroup101CC9B1"
+        },
+        "awslogs-stream-prefix": "nipuna-api",
+        "awslogs-region": "ap-south-1"
+       }
+      },
+      "Name": "NipunaApi",
+      "PortMappings": [
+       {
+        "ContainerPort": 8000,
+        "Protocol": "tcp"
+       }
+      ]
+     }
+    ],
+    "Cpu": "512",
+    "ExecutionRoleArn": {
+     "Fn::GetAtt": [
+      "EcsExecutionRoleFD93B7A2",
+      "Arn"
+     ]
+    },
+    "Family": "EcsStackApiTaskDef570C3358",
+    "Memory": "1024",
+    "NetworkMode": "awsvpc",
+    "RequiresCompatibilities": [
+     "FARGATE"
+    ],
+    "RuntimePlatform": {
+     "CpuArchitecture": "ARM64",
+     "OperatingSystemFamily": "LINUX"
+    },
+    "TaskRoleArn": {
+     "Fn::GetAtt": [
+      "EcsTaskRole8DFA0181",
+      "Arn"
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "EcsStack/ApiTaskDef/Resource"
+   }
+  },
+  "ApiTaskDefNipunaApiLogGroup101CC9B1": {
+   "Type": "AWS::Logs::LogGroup",
+   "UpdateReplacePolicy": "Retain",
+   "DeletionPolicy": "Retain",
+   "Metadata": {
+    "aws:cdk:path": "EcsStack/ApiTaskDef/NipunaApi/LogGroup/Resource"
+   }
+  },
+  "NipunaApiService88093D2F": {
+   "Type": "AWS::ECS::Service",
+   "Properties": {
+    "Cluster": {
+     "Ref": "NipunaCluster704EC85F"
+    },
+    "DeploymentConfiguration": {
+     "Alarms": {
+      "AlarmNames": [],
+      "Enable": false,
+      "Rollback": false
+     },
+     "MaximumPercent": 200,
+     "MinimumHealthyPercent": 50
+    },
+    "DesiredCount": 1,
+    "EnableECSManagedTags": false,
+    "HealthCheckGracePeriodSeconds": 60,
+    "LaunchType": "FARGATE",
+    "LoadBalancers": [
+     {
+      "ContainerName": "NipunaApi",
+      "ContainerPort": 8000,
+      "TargetGroupArn": {
+       "Ref": "NipunaAlbHttpListenerApiTargetGroup85261274"
+      }
+     }
+    ],
+    "NetworkConfiguration": {
+     "AwsvpcConfiguration": {
+      "AssignPublicIp": "DISABLED",
+      "SecurityGroups": [
+       {
+        "Fn::GetAtt": [
+         "EcsSg17B4B0B3",
+         "GroupId"
+        ]
+       }
+      ],
+      "Subnets": [
+       {
+        "Fn::ImportValue": "VpcStack:ExportsOutputRefNipunaVpcprivateSubnet1SubnetA7930318104C3C34"
+       },
+       {
+        "Fn::ImportValue": "VpcStack:ExportsOutputRefNipunaVpcprivateSubnet2Subnet88B44C3CBBA41987"
+       }
+      ]
+     }
+    },
+    "TaskDefinition": {
+     "Ref": "ApiTaskDef37DBDBD0"
+    }
+   },
+   "DependsOn": [
+    "EcsTaskRoleDefaultPolicy50882C77",
+    "EcsTaskRole8DFA0181",
+    "NipunaAlbHttpListenerApiTargetGroup85261274",
+    "NipunaAlbHttpListenerB6A479DD"
+   ],
+   "Metadata": {
+    "aws:cdk:path": "EcsStack/NipunaApiService/Service"
+   }
+  },
+  "WorkerTaskDef3CFCC8D9": {
+   "Type": "AWS::ECS::TaskDefinition",
+   "Properties": {
+    "ContainerDefinitions": [
+     {
+      "Environment": [
+       {
+        "Name": "ENV",
+        "Value": "production"
+       },
+       {
+        "Name": "AWS_SECRETS_MANAGER_SECRET_NAME",
+        "Value": "nipuna-secrets"
+       },
+       {
+        "Name": "REDIS_URL",
+        "Value": {
+         "Fn::Join": [
+          "",
+          [
+           "redis://",
+           {
+            "Fn::ImportValue": "ElastiCacheStack:ExportsOutputFnGetAttNipunaRedisRedisEndpointAddress954C8FD8"
+           },
+           ":6379/0"
+          ]
+         ]
+        }
+       },
+       {
+        "Name": "CELERY_BROKER_URL",
+        "Value": {
+         "Fn::Join": [
+          "",
+          [
+           "redis://",
+           {
+            "Fn::ImportValue": "ElastiCacheStack:ExportsOutputFnGetAttNipunaRedisRedisEndpointAddress954C8FD8"
+           },
+           ":6379/0"
+          ]
+         ]
+        }
+       },
+       {
+        "Name": "OPENSEARCH_ENDPOINT",
+        "Value": {
+         "Fn::ImportValue": "OpenSearchStack:ExportsOutputFnGetAttNipunaVectorsCollectionEndpointAD597528"
+        }
+       },
+       {
+        "Name": "DATABASE_URL",
+        "Value": {
+         "Fn::Join": [
+          "",
+          [
+           "postgresql+asyncpg://{{resolve:secretsmanager:",
+           {
+            "Fn::ImportValue": "RdsStack:ExportsOutputRefNipunaPostgresSecretAttachment6BCF441D82DD0909"
+           },
+           ":SecretString:username::}}:{{resolve:secretsmanager:",
+           {
+            "Fn::ImportValue": "RdsStack:ExportsOutputRefNipunaPostgresSecretAttachment6BCF441D82DD0909"
+           },
+           ":SecretString:password::}}@",
+           {
+            "Fn::ImportValue": "RdsStack:ExportsOutputFnGetAttNipunaPostgres57BFB72DEndpointAddress667D979C"
+           },
+           "/nipunadb"
+          ]
+         ]
+        }
+       }
+      ],
+      "Essential": true,
+      "Image": {
+       "Fn::Join": [
+        "",
+        [
+         {
+          "Fn::Select": [
+           4,
+           {
+            "Fn::Split": [
+             ":",
+             {
+              "Fn::ImportValue": "EcrStack:ExportsOutputFnGetAttNipunaWorkerRepoA2F985B4Arn18DAF65F"
+             }
+            ]
+           }
+          ]
+         },
+         ".dkr.ecr.",
+         {
+          "Fn::Select": [
+           3,
+           {
+            "Fn::Split": [
+             ":",
+             {
+              "Fn::ImportValue": "EcrStack:ExportsOutputFnGetAttNipunaWorkerRepoA2F985B4Arn18DAF65F"
+             }
+            ]
+           }
+          ]
+         },
+         ".",
+         {
+          "Ref": "AWS::URLSuffix"
+         },
+         "/",
+         {
+          "Fn::ImportValue": "EcrStack:ExportsOutputRefNipunaWorkerRepoA2F985B4A76576A3"
+         },
+         ":latest"
+        ]
+       ]
+      },
+      "LogConfiguration": {
+       "LogDriver": "awslogs",
+       "Options": {
+        "awslogs-group": {
+         "Ref": "WorkerTaskDefNipunaWorkerLogGroupF31B9BF7"
+        },
+        "awslogs-stream-prefix": "nipuna-worker",
+        "awslogs-region": "ap-south-1"
+       }
+      },
+      "Name": "NipunaWorker"
+     }
+    ],
+    "Cpu": "512",
+    "ExecutionRoleArn": {
+     "Fn::GetAtt": [
+      "EcsExecutionRoleFD93B7A2",
+      "Arn"
+     ]
+    },
+    "Family": "EcsStackWorkerTaskDef10F93A4F",
+    "Memory": "1024",
+    "NetworkMode": "awsvpc",
+    "RequiresCompatibilities": [
+     "FARGATE"
+    ],
+    "RuntimePlatform": {
+     "CpuArchitecture": "ARM64",
+     "OperatingSystemFamily": "LINUX"
+    },
+    "TaskRoleArn": {
+     "Fn::GetAtt": [
+      "EcsTaskRole8DFA0181",
+      "Arn"
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "EcsStack/WorkerTaskDef/Resource"
+   }
+  },
+  "WorkerTaskDefNipunaWorkerLogGroupF31B9BF7": {
+   "Type": "AWS::Logs::LogGroup",
+   "UpdateReplacePolicy": "Retain",
+   "DeletionPolicy": "Retain",
+   "Metadata": {
+    "aws:cdk:path": "EcsStack/WorkerTaskDef/NipunaWorker/LogGroup/Resource"
+   }
+  },
+  "NipunaWorkerService4F3933A7": {
+   "Type": "AWS::ECS::Service",
+   "Properties": {
+    "Cluster": {
+     "Ref": "NipunaCluster704EC85F"
+    },
+    "DeploymentConfiguration": {
+     "Alarms": {
+      "AlarmNames": [],
+      "Enable": false,
+      "Rollback": false
+     },
+     "MaximumPercent": 200,
+     "MinimumHealthyPercent": 50
+    },
+    "DesiredCount": 1,
+    "EnableECSManagedTags": false,
+    "LaunchType": "FARGATE",
+    "NetworkConfiguration": {
+     "AwsvpcConfiguration": {
+      "AssignPublicIp": "DISABLED",
+      "SecurityGroups": [
+       {
+        "Fn::GetAtt": [
+         "EcsSg17B4B0B3",
+         "GroupId"
+        ]
+       }
+      ],
+      "Subnets": [
+       {
+        "Fn::ImportValue": "VpcStack:ExportsOutputRefNipunaVpcprivateSubnet1SubnetA7930318104C3C34"
+       },
+       {
+        "Fn::ImportValue": "VpcStack:ExportsOutputRefNipunaVpcprivateSubnet2Subnet88B44C3CBBA41987"
+       }
+      ]
+     }
+    },
+    "TaskDefinition": {
+     "Ref": "WorkerTaskDef3CFCC8D9"
+    }
+   },
+   "DependsOn": [
+    "EcsTaskRoleDefaultPolicy50882C77",
+    "EcsTaskRole8DFA0181"
+   ],
+   "Metadata": {
+    "aws:cdk:path": "EcsStack/NipunaWorkerService/Service"
+   }
+  },
+  "CDKMetadata": {
+   "Type": "AWS::CDK::Metadata",
+   "Properties": {
+    "Analytics": "v2:deflate64:H4sIAAAAAAAA/31PS0sDMRD+Lb2nYwmIZ60oQkHp9i7T7DRMN02WPLaUkP8u+yqrB0/zveYlQT4+wWaF17BWdbM2fIRcRVSNwGv4zqQC5K1JIZIX25Od4Rt6jZEOGJpXOrHlyM72gb+KsxHZkl9oU29FvmNFfdMEiyAlIVekkud4e/cutaP9n/BhtacQiiCDIbIyDusjGrSKre4k5Oe2Nayw371zWL8M3vjOL77McYhkp8yMF/4BvaZ4v2dBi2C8QN47M3w21C9nWN16OqIijNMB8s7p+4gZl9KzzxTbFIuwriY4h4dOSpASNqtzYF77ZCNfCPZj/QHOGKI5xAEAAA=="
+   },
+   "Metadata": {
+    "aws:cdk:path": "EcsStack/CDKMetadata/Default"
+   }
+  }
+ },
+ "Outputs": {
+  "AlbDnsName": {
+   "Value": {
+    "Fn::GetAtt": [
+     "NipunaAlb9E2FB782",
+     "DNSName"
+    ]
+   }
+  },
+  "ClusterName": {
+   "Value": {
+    "Ref": "NipunaCluster704EC85F"
+   }
+  }
+ },
+ "Parameters": {
+  "BootstrapVersion": {
+   "Type": "AWS::SSM::Parameter::Value<String>",
+   "Default": "/cdk-bootstrap/hnb659fds/version",
+   "Description": "Version of the CDK Bootstrap resources in this environment, automatically retrieved from SSM Parameter Store. [cdk:skip]"
+  }
+ },
+ "Rules": {
+  "CheckBootstrapVersion": {
+   "Assertions": [
+    {
+     "Assert": {
+      "Fn::Not": [
+       {
+        "Fn::Contains": [
+         [
+          "1",
+          "2",
+          "3",
+          "4",
+          "5"
+         ],
+         {
+          "Ref": "BootstrapVersion"
+         }
+        ]
+       }
+      ]
+     },
+     "AssertDescription": "CDK bootstrap stack version 6 required. Please run 'cdk bootstrap' with a recent version of the CDK CLI."
+    }
+   ]
+  }
+ }
+}
