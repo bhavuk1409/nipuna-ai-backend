@@ -61,18 +61,22 @@ async def check_tool_connectivity(tool_name: str, org_id: str | None = None) -> 
     return False
 
 
-async def get_available_tools_for_org(org_id: str, db: AsyncSession) -> dict[str, list[dict]]:
+async def get_available_tools_for_org(org_id: str | UUID, db: AsyncSession) -> dict[str, list[dict]]:
     """Get all connected tools and their available actions/definitions for an org."""
     from sqlalchemy import select
     from app.models.integration import Integration
+    from uuid import UUID as PyUUID
+
+    resolved_org_id = PyUUID(org_id) if isinstance(org_id, str) else org_id
 
     result = await db.execute(
         select(Integration).where(
-            Integration.org_id == org_id,
+            Integration.org_id == resolved_org_id,
             Integration.status == "connected",
         )
     )
     connected = result.scalars().all()
+
     
     tools: dict[str, list[dict]] = {}
     for integration in connected:

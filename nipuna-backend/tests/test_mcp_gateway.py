@@ -133,9 +133,9 @@ async def test_get_available_tools_for_org(mock_composio, db_session):
     assert tools["GMAIL"][0]["name"] == "GMAIL_SEND_EMAIL"
     
     tally_action_names = [t["name"] for t in tools["TALLY"]]
-    assert "fetch_vouchers" in tally_action_names
-    assert "fetch_ledger_balance" in tally_action_names
-    assert "get_company_info" in tally_action_names
+    assert "list-master" in tally_action_names
+    assert "ledger-balance" in tally_action_names
+    assert "trial-balance" in tally_action_names
 
 
 @pytest.mark.asyncio

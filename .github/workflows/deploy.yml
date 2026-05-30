@@ -36,6 +36,7 @@ jobs:
           DATABASE_URL: sqlite+aiosqlite:///./test.db
           ENV: test
           CLERK_SECRET_KEY: test
+          CLERK_WEBHOOK_SECRET: test
         run: pytest tests/ -v
 
   deploy:
