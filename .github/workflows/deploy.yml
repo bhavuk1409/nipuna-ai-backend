@@ -28,7 +28,7 @@ jobs:
         working-directory: ./nipuna-backend
         run: |
           pip install -r requirements.txt
-          pip install pytest httpx aiosqlite
+          pip install pytest pytest-asyncio httpx aiosqlite
 
       - name: Run tests
         working-directory: ./nipuna-backend
