@@ -3,6 +3,9 @@ from jose import JWTError, jwt
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional
+import logging
+
+logger = logging.getLogger(__name__)
 
 from app.core.jwks import get_jwks
 from app.database import get_db
@@ -36,6 +39,7 @@ async def create_onboarding(
             token, jwks, algorithms=["RS256"], options={"verify_aud": False}
         )
     except JWTError as exc:
+        logger.warning("JWT decode failed in onboarding: %s", exc)
         raise HTTPException(status_code=401, detail=f"Invalid token: {exc}")
 
     clerk_user_id: str | None = claims.get("sub")

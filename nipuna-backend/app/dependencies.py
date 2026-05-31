@@ -37,8 +37,8 @@ async def get_current_user(
             options={"verify_aud": False},
         )
     except JWTError as exc:
-        logger.debug("JWT decode failed: %s", exc)
-        raise HTTPException(status_code=401, detail="Invalid token")
+        logger.warning("JWT decode failed: %s", exc)
+        raise HTTPException(status_code=401, detail=f"Invalid token: {exc}")
 
     clerk_user_id: str | None = claims.get("sub")
     if not clerk_user_id:
@@ -107,8 +107,9 @@ async def get_current_org(
             options={"verify_aud": False},
         )
         clerk_org_id = claims.get("org_id")
-    except JWTError:
-        raise HTTPException(status_code=401, detail="Invalid token")
+    except JWTError as exc:
+        logger.warning("JWT decode failed in org check: %s", exc)
+        raise HTTPException(status_code=401, detail=f"Invalid token: {exc}")
 
     # Look up by clerk_org_id from JWT if present
     if clerk_org_id:
