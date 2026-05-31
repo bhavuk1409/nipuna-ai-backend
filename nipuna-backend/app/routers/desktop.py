@@ -12,6 +12,7 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import get_settings
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.models.user import User
@@ -26,8 +27,6 @@ page_router = APIRouter(tags=["desktop"])
 # In-memory store: opaque_token -> { clerk_jwt, expires_at, user_id }
 _desktop_tokens: dict[str, dict[str, Any]] = {}
 
-CLERK_PUBLISHABLE_KEY = "pk_test_ZWxlZ2FudC1sb2N1c3QtNC5jbGVyay5hY2NvdW50cy5kZXYk"
-CLERK_DOMAIN = "elegant-locust-4.clerk.accounts.dev"
 
 DESKTOP_AUTH_HTML = """
 <!DOCTYPE html>
@@ -328,9 +327,10 @@ DESKTOP_AUTH_HTML = """
 @page_router.get("/desktop-auth", response_class=HTMLResponse, include_in_schema=False)
 async def desktop_auth_page(redirect_uri: str = Query(default="")) -> HTMLResponse:
     """Serves the Clerk sign-in page for desktop app authentication."""
+    settings = get_settings()
     html = DESKTOP_AUTH_HTML.format(
-        clerk_publishable_key=CLERK_PUBLISHABLE_KEY,
-        clerk_domain=CLERK_DOMAIN,
+        clerk_publishable_key=settings.clerk_publishable_key,
+        clerk_domain=settings.clerk_domain,
     )
     return HTMLResponse(content=html)
 

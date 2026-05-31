@@ -18,6 +18,7 @@ ENV_TO_FIELD = {
     "CLERK_SECRET_KEY": "clerk_secret_key",
     "CLERK_WEBHOOK_SECRET": "clerk_webhook_secret",
     "CLERK_DOMAIN": "clerk_domain",
+    "CLERK_PUBLISHABLE_KEY": "clerk_publishable_key",
     "GROQ_API_KEY": "groq_api_key",
     "REDIS_URL": "redis_url",
     "CELERY_BROKER_URL": "celery_broker_url",
@@ -65,6 +66,10 @@ class Settings(BaseSettings):
     clerk_secret_key: str | None = Field(default=None, alias="CLERK_SECRET_KEY")
     clerk_webhook_secret: str | None = Field(default=None, alias="CLERK_WEBHOOK_SECRET")
     clerk_domain: str = Field(default="clerk.nipunaai.in", alias="CLERK_DOMAIN")
+    clerk_publishable_key: str = Field(
+        default="pk_live_Y2xlcmsubmlwdW5hYWkuaW4k",
+        alias="CLERK_PUBLISHABLE_KEY",
+    )
     groq_api_key: str | None = Field(default=None, alias="GROQ_API_KEY")
     redis_url: str = Field(default="redis://localhost:6379/0", alias="REDIS_URL")
     celery_broker_url: str | None = Field(default=None, alias="CELERY_BROKER_URL")

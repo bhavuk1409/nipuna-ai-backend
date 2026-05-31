@@ -1,16 +1,17 @@
 const { app, BrowserWindow, shell, ipcMain } = require('electron');
 const path = require('path');
 const http = require('http');
+const https = require('https');
 const { spawn } = require('child_process');
 const WebSocket = require('ws');
 
 let mainWindow = null;
 
-// ─── App State ────────────────────────────────────────────────────────────────
+const IS_PROD = app.isPackaged;
 
 const state = {
-  authUrl: 'http://localhost:8000/desktop-auth',
-  apiWsUrl: 'ws://localhost:8000/api/v1/ws/agents',
+  authUrl: IS_PROD ? 'https://api.nipunaai.in/desktop-auth' : 'http://localhost:8000/desktop-auth',
+  apiWsUrl: IS_PROD ? 'wss://api.nipunaai.in/api/v1/ws/agents' : 'ws://localhost:8000/api/v1/ws/agents',
   mcpUrl: 'http://localhost:9000',   // Tally XML port
   mcpServerPort: 3000,               // Our MCP HTTP server port
   status: 'idle',                    // idle | authenticating | connecting | connected | error
@@ -182,9 +183,11 @@ function startCallbackServer() {
 function exchangeToken(opaqueToken) {
   return new Promise((resolve, reject) => {
     const body = JSON.stringify({ token: opaqueToken });
+    const IS_PROD = app.isPackaged;
+    const reqLib = IS_PROD ? https : http;
     const opts = {
-      hostname: 'localhost',
-      port: 8000,
+      hostname: IS_PROD ? 'api.nipunaai.in' : 'localhost',
+      port: IS_PROD ? 443 : 8000,
       path: '/api/v1/desktop/exchange',
       method: 'POST',
       headers: {
@@ -193,7 +196,7 @@ function exchangeToken(opaqueToken) {
       },
     };
 
-    const req = http.request(opts, (res) => {
+    const req = reqLib.request(opts, (res) => {
       let data = '';
       res.on('data', (chunk) => { data += chunk; });
       res.on('end', () => {
