@@ -64,7 +64,7 @@ class Settings(BaseSettings):
     )
     clerk_secret_key: str | None = Field(default=None, alias="CLERK_SECRET_KEY")
     clerk_webhook_secret: str | None = Field(default=None, alias="CLERK_WEBHOOK_SECRET")
-    clerk_domain: str = Field(default="", alias="CLERK_DOMAIN")
+    clerk_domain: str = Field(default="clerk.nipunaai.in", alias="CLERK_DOMAIN")
     groq_api_key: str | None = Field(default=None, alias="GROQ_API_KEY")
     redis_url: str = Field(default="redis://localhost:6379/0", alias="REDIS_URL")
     celery_broker_url: str | None = Field(default=None, alias="CELERY_BROKER_URL")

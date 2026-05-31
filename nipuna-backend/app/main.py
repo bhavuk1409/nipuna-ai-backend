@@ -1,10 +1,12 @@
 # Force redeployment trigger
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+import logging
 
 import sentry_sdk
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
@@ -18,8 +20,22 @@ from app.middleware.security_headers import SecurityHeadersMiddleware
 from app.routers import api_router
 from app.routers.desktop import page_router as desktop_page_router
 
+logger = logging.getLogger(__name__)
 
 settings = get_settings()
+
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:8080",
+    "http://127.0.0.1:8080",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "https://app.nipunaai.in",
+    "https://nipunaai.in",
+    "https://www.nipunaai.in",
+    "http://127.0.0.1:41731",
+]
 
 
 @asynccontextmanager
@@ -44,20 +60,29 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Catch-all handler that ensures CORS headers are always present on 500s.
+    Without this, unhandled exceptions can bypass CORSMiddleware and the browser
+    sees a CORS violation instead of the actual error."""
+    logger.exception("Unhandled exception on %s %s: %s", request.method, request.url.path, exc)
+    origin = request.headers.get("origin", "")
+    headers: dict[str, str] = {}
+    if origin in CORS_ALLOWED_ORIGINS:
+        headers["access-control-allow-origin"] = origin
+        headers["access-control-allow-credentials"] = "true"
+        headers["access-control-expose-headers"] = "*"
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error"},
+        headers=headers,
+    )
+
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:8080",
-        "http://127.0.0.1:8080",
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "https://app.nipunaai.in",
-        "https://nipunaai.in",
-        "https://www.nipunaai.in",
-        "http://127.0.0.1:41731",
-    ],
+    allow_origins=CORS_ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
