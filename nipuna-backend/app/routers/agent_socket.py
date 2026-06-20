@@ -1,14 +1,19 @@
 import json
+import logging
+from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.dependencies import get_current_org, get_current_user
+from app.dependencies import resolve_current_org, resolve_current_user
+from app.models.integration import Integration
 from app.models.organization import Organization
 from app.models.user import User
 from app.services.mcp.agent_hub import AgentConnection, agent_hub
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/ws", tags=["agent-socket"])
 
 
@@ -27,8 +32,13 @@ async def agents_socket(
         await websocket.close(code=4401)
         return
 
-    user = await get_current_user(token=token, db=db)
-    org = await get_current_org(token=token, user=user, db=db)
+    try:
+        user = await resolve_current_user(token=token, db=db)
+        org = await resolve_current_org(token=token, user=user, db=db)
+    except HTTPException as exc:
+        logger.warning("WebSocket auth failed: %s", exc.detail)
+        await websocket.close(code=4401)
+        return
 
     await websocket.accept()
     agent_id = None
@@ -53,6 +63,33 @@ async def agents_socket(
                         capabilities=capabilities,
                     ),
                 )
+
+                # Automatically mark Tally integration as connected in the DB if agent has tally capability
+                if "tally" in capabilities:
+                    result = await db.execute(
+                        select(Integration).where(
+                            Integration.org_id == org.id,
+                            Integration.provider == "TALLY",
+                        )
+                    )
+                    integration = result.scalar_one_or_none()
+                    if not integration:
+                        from app.services.mcp.gateway import AVAILABLE_PROVIDERS
+                        meta = AVAILABLE_PROVIDERS["TALLY"]
+                        integration = Integration(
+                            org_id=org.id,
+                            provider="TALLY",
+                            display_name=meta["display_name"],
+                            description=meta.get("description"),
+                            category=meta.get("category"),
+                        )
+                        db.add(integration)
+                    integration.status = "connected"
+                    integration.sync_health = 100
+                    integration.last_synced = datetime.now(timezone.utc)
+                    await db.commit()
+                    logger.info("Automatically marked Tally integration as connected for org %s", org.id)
+
                 await websocket.send_text(json.dumps({"type": "registered", "agent_id": agent_id}))
                 continue
 
@@ -75,4 +112,21 @@ async def agents_socket(
             await websocket.send_text(json.dumps({"type": "error", "message": "Unknown message type"}))
     except WebSocketDisconnect:
         if agent_id:
+            try:
+                conn = agent_hub._connections.get(agent_id)
+                if conn and "tally" in conn.capabilities:
+                    # Automatically mark Tally integration as disconnected in the DB
+                    result = await db.execute(
+                        select(Integration).where(
+                            Integration.org_id == conn.org_id,
+                            Integration.provider == "TALLY",
+                        )
+                    )
+                    integration = result.scalar_one_or_none()
+                    if integration:
+                        integration.status = "disconnected"
+                        await db.commit()
+                        logger.info("Automatically marked Tally integration as disconnected for org %s", conn.org_id)
+            except Exception as e:
+                logger.error("Failed to mark Tally integration as disconnected: %s", e)
             agent_hub.unregister(agent_id)

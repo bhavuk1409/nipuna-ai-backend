@@ -13,9 +13,9 @@ class IntegrationInitializeRequest(BaseModel):
 
 
 class IntegrationResponse(BaseModel):
- 
+
     model_config = ConfigDict(from_attributes=True)
- 
+
     id: UUID
     org_id: UUID
     display_name: str
@@ -39,4 +39,4 @@ class AvailableIntegrationResponse(BaseModel):
     display_name: str
     description: str | None = None
     category: str | None = None
-
+    tags: list[str] = Field(default_factory=list)

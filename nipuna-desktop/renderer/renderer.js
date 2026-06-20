@@ -3,6 +3,7 @@ const statusBadge   = document.getElementById('status-badge');
 const statusLabel   = document.getElementById('status-label');
 const statusText    = document.getElementById('status-text');
 const btnAuth       = document.getElementById('btn-auth');
+const btnAuthLabel  = btnAuth.querySelector('.btn-label');
 const btnDisconnect = document.getElementById('btn-disconnect');
 const errorBox      = document.getElementById('error-box');
 
@@ -59,9 +60,9 @@ function updateUI(s) {
   // Buttons
   const busy = status === 'authenticating' || status === 'connecting';
   btnAuth.disabled = busy || s.connected;
-  btnAuth.textContent = status === 'authenticating' ? 'Opening browser…'
-                      : status === 'connecting'     ? 'Connecting…'
-                      : 'Sign in with Nipuna';
+  btnAuthLabel.textContent = status === 'authenticating' ? 'Opening browser…'
+                           : status === 'connecting'     ? 'Connecting…'
+                           : 'Sign in with Nipuna';
   btnAuth.hidden = s.connected;
 
   btnDisconnect.hidden = !s.connected;

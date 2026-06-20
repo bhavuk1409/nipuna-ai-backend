@@ -10,8 +10,8 @@ let mainWindow = null;
 const IS_PROD = app.isPackaged;
 
 const state = {
-  authUrl: IS_PROD ? 'https://api.nipunaai.in/desktop-auth' : 'http://localhost:8000/desktop-auth',
-  apiWsUrl: IS_PROD ? 'wss://api.nipunaai.in/api/v1/ws/agents' : 'ws://localhost:8000/api/v1/ws/agents',
+  authUrl: 'http://localhost:8080/desktop-auth',
+  apiWsUrl: 'ws://localhost:8000/api/v1/ws/agents',
   mcpUrl: 'http://localhost:9000',   // Tally XML port
   mcpServerPort: 3000,               // Our MCP HTTP server port
   status: 'idle',                    // idle | authenticating | connecting | connected | error
@@ -26,6 +26,7 @@ let agentWs = null;          // WebSocket to backend
 let mcpProcess = null;       // Child process for MCP server
 let clerkJwt = null;         // Stored Clerk JWT
 let tallyCheckInterval = null;
+let mcpReadyCheckInterval = null;
 
 // ─── Renderer Sync ────────────────────────────────────────────────────────────
 
@@ -69,7 +70,7 @@ function startCallbackServer() {
     }
 
     callbackServer = http.createServer(async (req, res) => {
-      const url = new URL(req.url, 'http://127.0.0.1:41731');
+      const url = new URL(req.url, 'http://localhost:41731');
       if (url.pathname !== '/callback') {
         res.writeHead(404);
         res.end();
@@ -183,11 +184,10 @@ function startCallbackServer() {
 function exchangeToken(opaqueToken) {
   return new Promise((resolve, reject) => {
     const body = JSON.stringify({ token: opaqueToken });
-    const IS_PROD = app.isPackaged;
-    const reqLib = IS_PROD ? https : http;
+    const reqLib = http;
     const opts = {
-      hostname: IS_PROD ? 'api.nipunaai.in' : 'localhost',
-      port: IS_PROD ? 443 : 8000,
+      hostname: 'localhost',
+      port: 8000,
       path: '/api/v1/desktop/exchange',
       method: 'POST',
       headers: {
@@ -382,6 +382,49 @@ function callLocalMcp(action, params) {
   });
 }
 
+function checkMcpServerReady() {
+  return new Promise((resolve) => {
+    const req = http.request(
+      {
+        hostname: 'localhost',
+        port: state.mcpServerPort,
+        path: '/.well-known/oauth-authorization-server',
+        method: 'GET',
+      },
+      (res) => {
+        res.resume();
+        resolve(res.statusCode === 200);
+      }
+    );
+
+    req.on('error', () => resolve(false));
+    req.setTimeout(1000, () => {
+      req.destroy();
+      resolve(false);
+    });
+    req.end();
+  });
+}
+
+function startMcpReadinessCheck() {
+  if (mcpReadyCheckInterval) return;
+
+  const doCheck = async () => {
+    const ready = await checkMcpServerReady();
+    if (ready) {
+      clearInterval(mcpReadyCheckInterval);
+      mcpReadyCheckInterval = null;
+      if (!state.mcpRunning) {
+        setState({ mcpRunning: true });
+      }
+      startTallyHealthCheck();
+    }
+  };
+
+  doCheck();
+  mcpReadyCheckInterval = setInterval(doCheck, 500);
+}
+
 // ─── MCP Server Child Process ─────────────────────────────────────────────────
 
 function startMcpServer() {
@@ -413,32 +456,44 @@ function startMcpServer() {
   mcpProcess.stdout.on('data', (data) => {
     const msg = data.toString().trim();
     console.log('[MCP]', msg);
-    if (msg.includes(`port ${state.mcpServerPort}`)) {
-      setState({ mcpRunning: true });
-      startTallyHealthCheck();
-    }
+    startMcpReadinessCheck();
   });
 
   mcpProcess.stderr.on('data', (data) => {
     console.error('[MCP ERR]', data.toString().trim());
+    startMcpReadinessCheck();
   });
 
   mcpProcess.on('close', (code) => {
     console.log('MCP server exited with code', code);
     mcpProcess = null;
     setState({ mcpRunning: false });
+    if (mcpReadyCheckInterval) {
+      clearInterval(mcpReadyCheckInterval);
+      mcpReadyCheckInterval = null;
+    }
   });
 
   mcpProcess.on('error', (err) => {
     console.error('Failed to start MCP server:', err.message);
     setState({ mcpRunning: false, lastError: `MCP server failed to start: ${err.message}` });
+    if (mcpReadyCheckInterval) {
+      clearInterval(mcpReadyCheckInterval);
+      mcpReadyCheckInterval = null;
+    }
   });
+
+  startMcpReadinessCheck();
 }
 
 function stopMcpServer() {
   if (mcpProcess) {
     mcpProcess.kill();
     mcpProcess = null;
+  }
+  if (mcpReadyCheckInterval) {
+    clearInterval(mcpReadyCheckInterval);
+    mcpReadyCheckInterval = null;
   }
 }
 
@@ -479,7 +534,7 @@ async function startAuthFlow() {
   setState({ status: 'authenticating', lastError: null });
   await startCallbackServer();
 
-  const redirectUri = encodeURIComponent('http://127.0.0.1:41731/callback');
+  const redirectUri = encodeURIComponent('http://localhost:41731/callback');
   const url = `${state.authUrl}?redirect_uri=${redirectUri}`;
   console.log('Opening auth URL:', url);
 

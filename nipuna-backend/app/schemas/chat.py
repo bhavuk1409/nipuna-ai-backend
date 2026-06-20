@@ -2,7 +2,7 @@ from pydantic import BaseModel, Field
 
 
 class ChatRequest(BaseModel):
-    agent_id: str = Field(..., description="UUID of the agent")
+    agent_id: str | None = Field(default=None, description="UUID of the agent")
     content: str = Field(..., min_length=1)
     conversation_id: str | None = Field(default=None, description="Resume existing conversation")
 

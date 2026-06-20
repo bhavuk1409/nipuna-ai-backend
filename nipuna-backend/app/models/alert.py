@@ -36,5 +36,6 @@ class Alert(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     severity: Mapped[str] = mapped_column(alert_severity_enum, nullable=False)
     message: Mapped[str] = mapped_column(Text, nullable=False)
     delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     organization: Mapped["Organization"] = relationship(back_populates="alerts")

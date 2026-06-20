@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi import APIRouter, Header, HTTPException, Request, Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from svix.webhooks import Webhook, WebhookVerificationError
@@ -17,7 +17,7 @@ from app.database import get_db
 from app.models.organization import Organization
 from app.models.settings import OrgPreferences, WorkspaceSettings
 from app.models.user import User
-from fastapi import Depends
+from app.utils.audit import log_action
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -86,6 +86,7 @@ async def _handle_user_created(db: AsyncSession, data: dict) -> None:
 
     existing = await db.execute(select(User).where(User.clerk_user_id == clerk_user_id))
     if existing.scalar_one_or_none():
+        logger.info("User clerk_user_id=%s already exists (user.created ignored)", clerk_user_id)
         return
 
     email_list = data.get("email_addresses", [])
@@ -115,6 +116,7 @@ async def _handle_org_created(db: AsyncSession, data: dict) -> None:
         select(Organization).where(Organization.clerk_org_id == clerk_org_id)
     )
     if existing.scalar_one_or_none():
+        logger.info("Org clerk_org_id=%s already exists (org.created ignored)", clerk_org_id)
         return
 
     org = Organization(
@@ -136,6 +138,13 @@ async def _handle_org_created(db: AsyncSession, data: dict) -> None:
     )
     db.add(ws)
     db.add(prefs)
+
+    await log_action(
+        db,
+        org.id,
+        "org.created",
+        metadata={"clerk_org_id": clerk_org_id, "name": org.name},
+    )
     logger.info("Created org clerk_org_id=%s", clerk_org_id)
 
 
@@ -158,6 +167,14 @@ async def _handle_membership_created(db: AsyncSession, data: dict) -> None:
     user.org_id = org.id
     clerk_role = data.get("role", "org:member")
     user.role = "admin" if clerk_role == "org:admin" else "member"
+
+    await log_action(
+        db,
+        org.id,
+        "membership.created",
+        user_id=user.id,
+        metadata={"clerk_role": clerk_role, "role": user.role},
+    )
     logger.info("Linked user %s to org %s as %s", clerk_user_id, clerk_org_id, user.role)
 
 
@@ -170,8 +187,19 @@ async def _handle_membership_deleted(db: AsyncSession, data: dict) -> None:
     result = await db.execute(select(User).where(User.clerk_user_id == clerk_user_id))
     user = result.scalar_one_or_none()
     if user:
-        user.status = "suspended"
-        logger.info("Suspended user clerk_user_id=%s", clerk_user_id)
+        if user.status != "suspended":
+            user.status = "suspended"
+            org_id = user.org_id
+            user.org_id = None
+            if org_id:
+                await log_action(
+                    db,
+                    org_id,
+                    "membership.deleted",
+                    user_id=user.id,
+                    metadata={"clerk_user_id": clerk_user_id},
+                )
+            logger.info("Suspended user clerk_user_id=%s", clerk_user_id)
 
 
 async def _handle_user_deleted(db: AsyncSession, data: dict) -> None:
@@ -182,5 +210,14 @@ async def _handle_user_deleted(db: AsyncSession, data: dict) -> None:
     result = await db.execute(select(User).where(User.clerk_user_id == clerk_user_id))
     user = result.scalar_one_or_none()
     if user:
+        org_id = user.org_id
+        if org_id:
+            await log_action(
+                db,
+                org_id,
+                "user.deleted",
+                user_id=user.id,
+                metadata={"clerk_user_id": clerk_user_id},
+            )
         await db.delete(user)
         logger.info("Deleted user clerk_user_id=%s", clerk_user_id)

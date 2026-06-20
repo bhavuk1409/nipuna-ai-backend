@@ -1,4 +1,3 @@
-# Force redeployment trigger
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 import logging
@@ -18,7 +17,7 @@ from app.middleware.logging import LoggingMiddleware
 from app.middleware.rate_limit import setup_rate_limiting
 from app.middleware.security_headers import SecurityHeadersMiddleware
 from app.routers import api_router
-from app.routers.desktop import page_router as desktop_page_router
+from app.services.notifications.schema import ensure_alert_schema
 
 logger = logging.getLogger(__name__)
 
@@ -34,12 +33,17 @@ CORS_ALLOWED_ORIGINS = [
     "https://app.nipunaai.in",
     "https://nipunaai.in",
     "https://www.nipunaai.in",
-    "http://127.0.0.1:41731",
 ]
+
+# Merge with configurable CORS_EXTRA_ORIGINS from settings
+if settings.cors_extra_origins:
+    extra_origins = [orig.strip() for orig in settings.cors_extra_origins.split(",") if orig.strip()]
+    CORS_ALLOWED_ORIGINS.extend(extra_origins)
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    logger.info("Starting Nipuna AI Backend. Active auth domain: '%s'", settings.clerk_domain)
     if settings.sentry_dsn:
         sentry_sdk.init(
             dsn=settings.sentry_dsn,
@@ -49,6 +53,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
     async with engine.begin() as connection:
         await connection.execute(text("SELECT 1"))
+        await connection.run_sync(ensure_alert_schema)
 
     yield
     await engine.dispose()
@@ -98,7 +103,6 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(SlowAPIMiddleware)
 
 app.include_router(api_router, prefix="/api/v1")
-app.include_router(desktop_page_router)
 
 
 @app.get("/", tags=["system"])
@@ -114,6 +118,3 @@ async def root() -> dict[str, str]:
 @app.get("/health", tags=["system"])
 async def health_check() -> dict[str, str]:
     return {"status": "ok", "env": settings.env}
-
-
-# CI/CD trigger comment

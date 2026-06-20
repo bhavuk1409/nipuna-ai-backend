@@ -44,45 +44,77 @@ async def _get_or_create_conversation(
     conversation_id: str | None = None,
 ) -> Conversation:
     """Return an existing conversation or create a new one."""
+    conv_uuid: uuid.UUID | None = None
     if conversation_id:
-        result = await db.execute(
-            select(Conversation).where(
-                Conversation.id == uuid.UUID(conversation_id),
-                Conversation.org_id == org_id,
+        # Strip "chat-" prefix if present
+        clean_id = conversation_id
+        if clean_id.startswith("chat-"):
+            clean_id = clean_id[5:]
+        try:
+            conv_uuid = uuid.UUID(clean_id)
+            result = await db.execute(
+                select(Conversation).where(
+                    Conversation.id == conv_uuid,
+                    Conversation.org_id == org_id,
+                )
             )
-        )
-        conv = result.scalar_one_or_none()
-        if conv:
-            return conv
+            conv = result.scalar_one_or_none()
+            if conv:
+                return conv
+        except ValueError:
+            pass
 
-    result = await db.execute(
-        select(Conversation).where(
-            Conversation.org_id == org_id,
-            Conversation.agent_id == agent_id,
-            Conversation.user_id == user_id,
-        )
-    )
-    conv = result.scalar_one_or_none()
-    if conv:
-        return conv
-
+    # If not found or invalid ID, create a new one
     conv = Conversation(org_id=org_id, agent_id=agent_id, user_id=user_id)
+    if conv_uuid:
+        # Preserve the parsed UUID on the new conversation so that
+        # the client doesn't get out of sync with its local ID.
+        conv.id = conv_uuid
     db.add(conv)
     await db.flush()
     return conv
 
 
-async def _get_agent(db: AsyncSession, agent_id: str, org_id: uuid.UUID) -> Agent:
+async def _get_or_create_default_agent(db: AsyncSession, org_id: uuid.UUID, user_id: uuid.UUID, agent_id: str | None = None) -> Agent:
+    if agent_id and agent_id != "default" and agent_id != "undefined" and agent_id != "null":
+        try:
+            agent_uuid = uuid.UUID(agent_id)
+            result = await db.execute(
+                select(Agent).where(
+                    Agent.id == agent_uuid,
+                    Agent.org_id == org_id,
+                    Agent.status != "deleted",
+                )
+            )
+            agent = result.scalar_one_or_none()
+            if agent:
+                return agent
+        except ValueError:
+            pass
+
+    # Check for any active agent for this org
     result = await db.execute(
         select(Agent).where(
-            Agent.id == agent_id,
             Agent.org_id == org_id,
             Agent.status != "deleted",
-        )
+        ).order_by(Agent.created_at)
     )
     agent = result.scalar_one_or_none()
-    if not agent:
-        raise HTTPException(status_code=404, detail="Agent not found")
+    if agent:
+        return agent
+
+    # If no agent exists, auto-create a default one
+    agent = Agent(
+        org_id=org_id,
+        name="Nipuna AI",
+        domain="General Business",
+        objective="Analyze cash flow, invoices, communications, and help run business operations.",
+        status="active",
+        created_by=user_id,
+    )
+    db.add(agent)
+    await db.flush()
+    await db.commit()
     return agent
 
 
@@ -123,7 +155,7 @@ async def send_message(
             detail="AI credits exhausted. Please upgrade your plan.",
         )
 
-    agent = await _get_agent(db, body.agent_id, org.id)
+    agent = await _get_or_create_default_agent(db, org.id, user.id, body.agent_id)
 
     conversation = await _get_or_create_conversation(
         db=db,
@@ -190,8 +222,8 @@ async def send_message(
 @router.get("/stream")
 async def stream_message(
     request: Request,
-    agent_id: str,
     content: str,
+    agent_id: str | None = None,
     conversation_id: str | None = None,
     org: Organization = Depends(get_current_org),
     user: User = Depends(get_current_user),
@@ -211,7 +243,7 @@ async def stream_message(
             yield "data: " + json.dumps({"type": "error", "content": "AI credits exhausted."}) + "\n\n"
         return StreamingResponse(credits_err(), media_type="text/event-stream")
 
-    agent = await _get_agent(db, agent_id, org.id)
+    agent = await _get_or_create_default_agent(db, org.id, user.id, agent_id)
 
     conversation = await _get_or_create_conversation(
         db=db,
@@ -251,6 +283,10 @@ async def stream_message(
                 rag_chunks=rag_chunks,
                 conversation_id=str(conversation.id),
             ):
+                if await request.is_disconnected():
+                    logger.warning("SSE client disconnected for conversation %s", conversation.id)
+                    break
+
                 payload = {
                     "type": event.type,
                     "content": event.content,
@@ -296,17 +332,19 @@ async def stream_message(
 
 @router.get("/history")
 async def get_chat_history(
-    agent_id: str,
+    agent_id: str | None = None,
     limit: int = 50,
     org: Organization = Depends(get_current_org),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Return recent messages for the given agent's conversation with this user."""
+    agent = await _get_or_create_default_agent(db, org.id, user.id, agent_id)
+
     result = await db.execute(
         select(Conversation).where(
             Conversation.org_id == org.id,
-            Conversation.agent_id == agent_id,
+            Conversation.agent_id == agent.id,
             Conversation.user_id == user.id,
         )
     )

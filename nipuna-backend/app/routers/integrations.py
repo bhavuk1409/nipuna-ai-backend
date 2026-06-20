@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.dependencies import get_current_org, get_current_user
+from app.models.alert import Alert
 from app.models.integration import Integration
 from app.models.organization import Organization
 from app.models.user import User
@@ -31,23 +32,48 @@ router = APIRouter(prefix="/integrations", tags=["integrations"])
 
 
 
+_DESKTOP_DIST_DEFAULTS: dict[str, tuple[str, str]] = {
+    "mac": ("Nipuna Desktop-0.1.0-arm64.dmg", "application/octet-stream"),
+    "win": ("Nipuna Desktop Setup 0.1.0.exe", "application/octet-stream"),
+}
+
+
 @router.get("/download/{os}")
 async def download_desktop_app(os: str):
-    if os.lower() == "mac":
-        file_path = "/Users/bhavukagrawal/nipuna-ai-backend/nipuna-desktop/dist/Nipuna Desktop-0.1.0-arm64.dmg"
-    elif os.lower() == "win":
-        file_path = "/Users/bhavukagrawal/nipuna-ai-backend/nipuna-desktop/dist/Nipuna Desktop Setup 0.1.0.exe"
-    else:
-        raise HTTPException(status_code=400, detail="Unsupported OS")
-    
+    """Serve the Nipuna Desktop installer binary.
+
+    The base directory is resolved from the DESKTOP_DIST_DIR environment
+    variable so the path is not hardcoded to any developer's home directory.
+    Falls back to a path relative to the project root for local development.
+    """
     import os as os_module
-    if not os_module.path.exists(file_path):
-        raise HTTPException(status_code=404, detail=f"File not found: {file_path}")
-        
+    from pathlib import Path
+
+    os_key = os.lower()
+    if os_key not in _DESKTOP_DIST_DEFAULTS:
+        raise HTTPException(status_code=400, detail=f"Unsupported OS: '{os_key}'. Valid values: mac, win")
+
+    filename, media_type = _DESKTOP_DIST_DEFAULTS[os_key]
+
+    # Prefer an explicit env override (required in production)
+    dist_dir_env = os_module.getenv("DESKTOP_DIST_DIR")
+    if dist_dir_env:
+        dist_dir = Path(dist_dir_env)
+    else:
+        # Local fallback: <repo-root>/nipuna-desktop/dist
+        dist_dir = Path(__file__).resolve().parents[3] / "nipuna-desktop" / "dist"
+
+    file_path = dist_dir / filename
+    if not file_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=f"Installer not found. Set DESKTOP_DIST_DIR env var or build the desktop app first.",
+        )
+
     return FileResponse(
-        path=file_path, 
-        filename=file_path.split("/")[-1],
-        media_type="application/octet-stream"
+        path=str(file_path),
+        filename=filename,
+        media_type=media_type,
     )
 
 @router.get("", response_model=IntegrationListResponse)
@@ -95,12 +121,18 @@ async def list_integrations(
 
 @router.get("/available", response_model=list[AvailableIntegrationResponse])
 async def list_available_integrations() -> list[AvailableIntegrationResponse]:
+    """Return the full catalogue of supported integration providers.
+
+    Tags (e.g. 'Popular', 'New', 'Indian Market') are metadata-only labels
+    defined in AVAILABLE_PROVIDERS and never stored in the database.
+    """
     return [
         AvailableIntegrationResponse(
             provider=provider,
             display_name=meta["display_name"],
             description=meta.get("description"),
             category=meta.get("category"),
+            tags=meta.get("tags", []),
         )
         for provider, meta in AVAILABLE_PROVIDERS.items()
     ]
@@ -294,6 +326,14 @@ async def disconnect_integration(
     integration.sync_health = 0
     integration.composio_connection_id = None
     integration.last_synced = None
+
+    disconnect_alert = Alert(
+        org_id=org.id,
+        rule_id="INTEGRATION_DISCONNECTED",
+        severity="warning",
+        message=f"Integration '{integration.display_name}' was disconnected.",
+    )
+    db.add(disconnect_alert)
 
     await log_action(db, org_id=org.id, user_id=user.id,
                      action="integration_disconnected",

@@ -12,13 +12,31 @@ from app.config import get_settings
 logger = logging.getLogger(__name__)
 
 COMPOSIO_TOOLS = [
-    "SLACK", "GMAIL", "GITHUB", "JIRA", "NOTION",
-    "SALESFORCE", "HUBSPOT", "ASANA", "TRELLO", "ZENDESK",
-    "GOOGLE_CALENDAR", "MICROSOFT_TEAMS", "WHATSAPP",
+    # Collaboration & Communication
+    "SLACK", "GMAIL", "MICROSOFT_TEAMS", "DISCORD", "WHATSAPP",
+    # Project Management
+    "GITHUB", "JIRA", "ASANA", "TRELLO", "LINEAR",
+    # Knowledge & Productivity
+    "NOTION", "GOOGLE_CALENDAR", "CALENDLY", "AIRTABLE",
+    # CRM & Marketing
+    "SALESFORCE", "HUBSPOT", "ZENDESK", "INTERCOM", "INSTAGRAM", "TWITTER",
+    # Storage
+    "GOOGLEDRIVE", "DROPBOX",
+    # Finance & Payments
+    "STRIPE", "QUICKBOOKS", "XERO", "RAZORPAY",
+    # E-commerce
+    "SHOPIFY",
+    # Video Conferencing
+    "ZOOM",
 ]
 
 SLUG_MAPPINGS = {
+    # Composio toolkit slugs that differ from our provider key
     "GOOGLE_CALENDAR": "googlecalendar",
+    "GOOGLEDRIVE": "googledrive",
+    "MICROSOFT_TEAMS": "microsoftteams",
+    "QUICKBOOKS": "quickbooks",
+    "TWITTER": "twitter",
 }
 
 

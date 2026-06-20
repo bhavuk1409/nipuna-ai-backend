@@ -14,16 +14,6 @@ from app.services.notifications.email import send_email
 router = APIRouter(prefix="/team", tags=["team"])
 
 
-@router.get("/debug-all-orgs")
-async def debug_all_orgs(db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Organization))
-    orgs = result.scalars().all()
-    return [
-        {"name": o.name, "clerk_org_id": o.clerk_org_id, "id": str(o.id)}
-        for o in orgs
-    ]
-
-
 @router.get("/members", response_model=TeamResponse)
 async def get_team_members(
     org: Organization = Depends(get_current_org),

@@ -48,8 +48,10 @@ def do_run_migrations(connection: Connection) -> None:
 
 
 async def run_migrations_online() -> None:
+    section = config.get_section(config.config_ini_section, {})
+    print(f"ALEMBIC CONNECTING TO URL: {section.get('sqlalchemy.url')}")
     connectable = async_engine_from_config(
-        config.get_section(config.config_ini_section, {}),
+        section,
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
     )

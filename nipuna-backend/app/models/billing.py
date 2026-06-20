@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 class BillingEvent(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "billing_events"
 
-    org_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
+    org_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=True, index=True)
     event_type: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
     razorpay_subscription_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     razorpay_payment_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)

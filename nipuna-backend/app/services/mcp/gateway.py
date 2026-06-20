@@ -1,27 +1,212 @@
+from typing import TypedDict
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.services.mcp.composio_gateway import COMPOSIO_TOOLS, ComposioGateway, composio_gateway
+from app.services.mcp.composio_gateway import COMPOSIO_TOOLS, ComposioGateway, composio_gateway  # noqa: F401
 
 COMPOSIO_TOOLS_LIST = COMPOSIO_TOOLS
 
-AVAILABLE_PROVIDERS = {
-    "SLACK": {"display_name": "Slack", "description": "Connect your workspace for real-time notifications and collaboration.", "category": "Marketing"},
-    "GMAIL": {"display_name": "Gmail", "description": "Sync your emails and automate communication flows.", "category": "Marketing"},
-    "GITHUB": {"display_name": "GitHub", "description": "Manage repositories, issues, and pull requests directly.", "category": "Database"},
-    "JIRA": {"display_name": "Jira", "description": "Track tasks, bugs, and project progress.", "category": "Product Analytics"},
-    "NOTION": {"display_name": "Notion", "description": "Sync your knowledge base and documents.", "category": "Product Analytics"},
-    "SALESFORCE": {"display_name": "Salesforce", "description": "Manage your CRM and customer pipelines.", "category": "Product Analytics"},
-    "HUBSPOT": {"display_name": "HubSpot", "description": "Integrate your marketing and sales hub.", "category": "Marketing"},
-    "ASANA": {"display_name": "Asana", "description": "Organize your work and track team progress.", "category": "Product Analytics"},
-    "TRELLO": {"display_name": "Trello", "description": "Manage your boards and cards.", "category": "Product Analytics"},
-    "ZENDESK": {"display_name": "Zendesk", "description": "Streamline your customer support tickets.", "category": "Marketing"},
-    "WHATSAPP": {"display_name": "WhatsApp", "description": "Send notifications and interact with customers.", "category": "Marketing"},
-    "GOOGLE_CALENDAR": {"display_name": "Google Calendar", "description": "Schedule events and manage your calendar.", "category": "Product Analytics"},
-    "MICROSOFT_TEAMS": {"display_name": "Microsoft Teams", "description": "Send channel alerts and collaborate with teams.", "category": "Marketing"},
-    "TALLY": {"display_name": "Tally", "description": "Connect your Tally accounting data.", "category": "Desktop tools"},
-    "GSTN": {"display_name": "GSTN", "description": "Access government tax filings and data.", "category": "Warehouse & Data Lakes"},
+
+class ProviderMeta(TypedDict, total=False):
+    display_name: str
+    description: str
+    category: str
+    tags: list[str]
+
+
+AVAILABLE_PROVIDERS: dict[str, ProviderMeta] = {
+    # ── Collaboration & Communication ────────────────────────────────────────
+    "SLACK": {
+        "display_name": "Slack",
+        "description": "Connect your workspace for real-time notifications and AI-driven collaboration.",
+        "category": "Collaboration",
+        "tags": ["Popular"],
+    },
+    "GMAIL": {
+        "display_name": "Gmail",
+        "description": "Sync your emails and automate end-to-end communication flows.",
+        "category": "Collaboration",
+        "tags": ["Popular"],
+    },
+    "MICROSOFT_TEAMS": {
+        "display_name": "Microsoft Teams",
+        "description": "Send channel alerts and trigger workflows from team conversations.",
+        "category": "Collaboration",
+        "tags": [],
+    },
+    "DISCORD": {
+        "display_name": "Discord",
+        "description": "Post messages and react to events in your Discord servers.",
+        "category": "Collaboration",
+        "tags": ["New"],
+    },
+    "WHATSAPP": {
+        "display_name": "WhatsApp",
+        "description": "Send automated notifications and interact with customers over WhatsApp.",
+        "category": "Collaboration",
+        "tags": ["Popular", "Indian Market"],
+    },
+    # ── Project Management ───────────────────────────────────────────────────
+    "GITHUB": {
+        "display_name": "GitHub",
+        "description": "Manage repositories, issues, and pull requests directly from Nipuna AI.",
+        "category": "Developer Tools",
+        "tags": ["Popular"],
+    },
+    "JIRA": {
+        "display_name": "Jira",
+        "description": "Track tasks, bugs, and project progress with full two-way sync.",
+        "category": "Project Management",
+        "tags": ["Popular"],
+    },
+    "ASANA": {
+        "display_name": "Asana",
+        "description": "Organise your work and keep your team on track with task automation.",
+        "category": "Project Management",
+        "tags": [],
+    },
+    "TRELLO": {
+        "display_name": "Trello",
+        "description": "Manage boards and cards; trigger actions from AI insights.",
+        "category": "Project Management",
+        "tags": [],
+    },
+    "LINEAR": {
+        "display_name": "Linear",
+        "description": "Streamline your engineering workflows with AI-powered issue management.",
+        "category": "Developer Tools",
+        "tags": ["New"],
+    },
+    # ── Knowledge & Productivity ─────────────────────────────────────────────
+    "NOTION": {
+        "display_name": "Notion",
+        "description": "Sync your knowledge base and auto-generate pages from AI outputs.",
+        "category": "Productivity",
+        "tags": ["Popular"],
+    },
+    "GOOGLE_CALENDAR": {
+        "display_name": "Google Calendar",
+        "description": "Schedule events and let AI manage your calendar intelligently.",
+        "category": "Productivity",
+        "tags": ["Popular"],
+    },
+    "CALENDLY": {
+        "display_name": "Calendly",
+        "description": "Automate scheduling and meeting management with AI-driven availability.",
+        "category": "Productivity",
+        "tags": ["New"],
+    },
+    "AIRTABLE": {
+        "display_name": "Airtable",
+        "description": "Query and update your Airtable bases as a structured data source.",
+        "category": "Database",
+        "tags": ["New"],
+    },
+    # ── CRM & Marketing ──────────────────────────────────────────────────────
+    "SALESFORCE": {
+        "display_name": "Salesforce",
+        "description": "Manage your CRM, customer pipelines, and revenue intelligence.",
+        "category": "CRM & Marketing",
+        "tags": ["Popular"],
+    },
+    "HUBSPOT": {
+        "display_name": "HubSpot",
+        "description": "Integrate your marketing, sales hub, and contact management.",
+        "category": "CRM & Marketing",
+        "tags": ["Popular"],
+    },
+    "ZENDESK": {
+        "display_name": "Zendesk",
+        "description": "Streamline customer support tickets and resolve queries with AI.",
+        "category": "CRM & Marketing",
+        "tags": [],
+    },
+    "INTERCOM": {
+        "display_name": "Intercom",
+        "description": "Automate customer messaging and support conversations at scale.",
+        "category": "CRM & Marketing",
+        "tags": ["New"],
+    },
+    "INSTAGRAM": {
+        "display_name": "Instagram",
+        "description": "Monitor brand mentions and automate Instagram business messaging.",
+        "category": "CRM & Marketing",
+        "tags": ["New"],
+    },
+    "TWITTER": {
+        "display_name": "Twitter / X",
+        "description": "Monitor brand mentions and automate posts and DMs.",
+        "category": "CRM & Marketing",
+        "tags": ["New"],
+    },
+    # ── Storage ──────────────────────────────────────────────────────────────
+    "GOOGLEDRIVE": {
+        "display_name": "Google Drive",
+        "description": "Read, write, and index your Drive files as an AI knowledge source.",
+        "category": "Storage",
+        "tags": ["Popular"],
+    },
+    "DROPBOX": {
+        "display_name": "Dropbox",
+        "description": "Connect your Dropbox for document retrieval and AI-powered search.",
+        "category": "Storage",
+        "tags": ["New"],
+    },
+    # ── Finance & Payments ───────────────────────────────────────────────────
+    "STRIPE": {
+        "display_name": "Stripe",
+        "description": "Access payment data, invoices, and subscription analytics.",
+        "category": "Finance & Payments",
+        "tags": ["Popular"],
+    },
+    "QUICKBOOKS": {
+        "display_name": "QuickBooks",
+        "description": "Sync accounting data, invoices, and financial reports automatically.",
+        "category": "Finance & Payments",
+        "tags": ["New"],
+    },
+    "XERO": {
+        "display_name": "Xero",
+        "description": "Connect your cloud accounting for automated bookkeeping insights.",
+        "category": "Finance & Payments",
+        "tags": ["New"],
+    },
+    "RAZORPAY": {
+        "display_name": "Razorpay",
+        "description": "Access your Indian payment gateway data, settlements, and analytics.",
+        "category": "Finance & Payments",
+        "tags": ["New", "Indian Market"],
+    },
+    # ── E-commerce ───────────────────────────────────────────────────────────
+    "SHOPIFY": {
+        "display_name": "Shopify",
+        "description": "Sync orders, inventory, and customer data from your Shopify store.",
+        "category": "E-commerce",
+        "tags": ["New"],
+    },
+    # ── Video Conferencing ───────────────────────────────────────────────────
+    "ZOOM": {
+        "display_name": "Zoom",
+        "description": "Schedule meetings and access transcripts from Zoom sessions.",
+        "category": "Video Conferencing",
+        "tags": ["New"],
+    },
+    # ── Native Integrations ──────────────────────────────────────────────────
+    "TALLY": {
+        "display_name": "Tally",
+        "description": "Connect your on-premise Tally ERP 9 / Prime accounting data via a local desktop bridge.",
+        "category": "Desktop Tools",
+        "tags": ["Indian Market"],
+    },
+    "GSTN": {
+        "display_name": "GSTN",
+        "description": "Access government GST portal data — verify GSTINs and fetch filing history.",
+        "category": "Warehouse & Data Lakes",
+        "tags": ["Indian Market"],
+    },
 }
+
+
 
 
 async def execute_tool(

@@ -2,6 +2,7 @@ import json
 import logging
 import os
 from functools import lru_cache
+from pathlib import Path
 
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError
@@ -9,6 +10,8 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
+
+BACKEND_DIR = Path(__file__).resolve().parents[1]
 
 ENV_TO_FIELD = {
     "DATABASE_URL": "database_url",
@@ -42,12 +45,13 @@ ENV_TO_FIELD = {
     "FRONTEND_URL": "frontend_url",
     "COMPOSIO_REDIRECT_URL": "composio_redirect_url",
     "TALLY_MCP_BASE_URL": "tally_mcp_base_url",
+    "CORS_EXTRA_ORIGINS": "cors_extra_origins",
 }
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=BACKEND_DIR / ".env",
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
@@ -65,9 +69,9 @@ class Settings(BaseSettings):
     )
     clerk_secret_key: str | None = Field(default=None, alias="CLERK_SECRET_KEY")
     clerk_webhook_secret: str | None = Field(default=None, alias="CLERK_WEBHOOK_SECRET")
-    clerk_domain: str = Field(default="clerk.nipunaai.in", alias="CLERK_DOMAIN")
+    clerk_domain: str = Field(default="", alias="CLERK_DOMAIN")
     clerk_publishable_key: str = Field(
-        default="pk_live_Y2xlcmsubmlwdW5hYWkuaW4k",
+        default="",
         alias="CLERK_PUBLISHABLE_KEY",
     )
     groq_api_key: str | None = Field(default=None, alias="GROQ_API_KEY")
@@ -93,6 +97,7 @@ class Settings(BaseSettings):
     frontend_url: str = Field(default="http://localhost:5173", alias="FRONTEND_URL")
     composio_redirect_url: str | None = Field(default=None, alias="COMPOSIO_REDIRECT_URL")
     tally_mcp_base_url: str | None = Field(default=None, alias="TALLY_MCP_BASE_URL")
+    cors_extra_origins: str = Field(default="", alias="CORS_EXTRA_ORIGINS")
 
     @property
     def is_production(self) -> bool:
@@ -109,6 +114,18 @@ class Settings(BaseSettings):
         if self.is_production:
             return "sqs://"
         return self.redis_url
+
+    def validate_auth_config(self) -> None:
+        missing = []
+        if not self.clerk_domain:
+            missing.append("CLERK_DOMAIN")
+        if not self.clerk_secret_key:
+            missing.append("CLERK_SECRET_KEY")
+        if missing:
+            logger.warning(
+                "Missing authentication configuration: %s. Auth checks and Clerk endpoints will fail.",
+                ", ".join(missing),
+            )
 
 
 def load_secrets_from_aws(settings: Settings) -> dict[str, str]:
@@ -152,4 +169,5 @@ def get_settings() -> Settings:
         aws_overrides = load_secrets_from_aws(settings)
         if aws_overrides:
             settings = settings.model_copy(update=aws_overrides)
+    settings.validate_auth_config()
     return settings

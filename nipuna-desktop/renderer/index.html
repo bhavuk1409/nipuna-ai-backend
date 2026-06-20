@@ -8,7 +8,9 @@
   </head>
   <body>
     <main class="shell">
-      <!-- Header -->
+      <div class="ambient ambient-a"></div>
+      <div class="ambient ambient-b"></div>
+
       <header class="app-header">
         <div class="brand">
           <img src="../logo.jpg" alt="Nipuna AI" class="brand-logo" />
@@ -23,30 +25,29 @@
         </div>
       </header>
 
-      <!-- Status Panel -->
-      <section class="status-panel" aria-live="polite">
-        <p id="status-text">Waiting for connection.</p>
+      <section class="hero-panel" aria-live="polite">
+        <div class="hero-copy">
+          <p class="eyebrow">Local Tally Bridge</p>
+          <h2>Connect Tally to your Nipuna workspace.</h2>
+          <p id="status-text">Waiting for connection.</p>
+        </div>
+
+        <div class="actions">
+          <button id="btn-auth" class="btn btn-primary" type="button">
+            <span class="btn-icon" aria-hidden="true">↗</span>
+            <span class="btn-label">Sign in with Nipuna</span>
+          </button>
+          <button id="btn-disconnect" class="btn btn-ghost" type="button" hidden>
+            Disconnect
+          </button>
+        </div>
       </section>
 
-      <!-- Action -->
-      <section class="actions">
-        <button id="btn-auth" class="btn btn-primary" type="button">
-          <span class="btn-icon">↗</span>
-          Sign in with Nipuna
-        </button>
-        <button id="btn-disconnect" class="btn btn-ghost" type="button" hidden>
-          Disconnect
-        </button>
-      </section>
-
-      <!-- Error -->
       <section class="error-box" id="error-box" hidden></section>
 
-      <!-- Diagnostics / Technical details (collapsed by default) -->
       <details class="diagnostics-details">
         <summary>Show system status</summary>
         <div class="diagnostics-content">
-          <!-- Service Status Cards -->
           <section class="services">
             <div class="service-card" id="card-backend">
               <div class="service-icon">

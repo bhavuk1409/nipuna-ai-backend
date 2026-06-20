@@ -1,41 +1,51 @@
-/* ─── Google Fonts ─────────────────────────────────────────────────────────── */
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Geist:wght@400;500;600;700&display=swap');
 
-/* ─── Reset & Base ──────────────────────────────────────────────────────────── */
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-:root {
-  --bg:           #f7f7f4; /* Warm background matching frontend */
-  --surface:      #ffffff; /* White card surface */
-  --surface-2:    #fafafa; /* Slightly darker raised surface */
-  --border:       rgba(0, 0, 0, 0.06); /* Elegant hairline border */
-  --border-strong:rgba(0, 0, 0, 0.12); /* Subtle outline */
-  --accent:       #101012; /* Dark primary brand accent */
-  --accent-light: #2c2c30;
-  --text:         #0f0f10; /* Clean dark text */
-  --text-muted:   #6b6b70; /* Elegant gray muted text */
-  --green:        #10b981; /* Safe success emerald green */
-  --green-dim:    rgba(16, 185, 129, 0.06);
-  --red:          #dc2626;
-  --red-dim:      rgba(220, 38, 38, 0.06);
-  --yellow:       #ea580c;
-  --yellow-dim:   rgba(234, 88, 12, 0.06);
-  --radius:       8px;
-  --shadow:       0 1px 3px rgba(0, 0, 0, 0.04), 0 10px 24px -10px rgba(0, 0, 0, 0.04);
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
 }
 
-html, body {
+:root {
+  --bg: #f7f7f4;
+  --surface: #ffffff;
+  --surface-soft: #f4f4f3;
+  --surface-high: #ededed;
+  --hairline: rgba(0, 0, 0, 0.08);
+  --outline: rgba(0, 0, 0, 0.16);
+  --text: #0f0f10;
+  --text-soft: #3f3f44;
+  --muted: #6b6b70;
+  --primary: #101012;
+  --primary-hover: #2f3130;
+  --success: #10b981;
+  --success-bg: rgba(16, 185, 129, 0.08);
+  --danger: #dc2626;
+  --danger-bg: rgba(220, 38, 38, 0.07);
+  --warning: #f59e0b;
+  --radius: 8px;
+  --shadow: 0 18px 40px -24px rgba(0, 0, 0, 0.28);
+}
+
+html,
+body {
   height: 100%;
   background: var(--bg);
   color: var(--text);
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   font-size: 13px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
+  text-rendering: geometricPrecision;
+  overflow: hidden;
 }
 
-/* ─── Shell ─────────────────────────────────────────────────────────────────── */
+body {
+  border: 1px solid var(--hairline);
+}
+
 .shell {
+  position: relative;
   display: flex;
   flex-direction: column;
   height: 100vh;
@@ -44,313 +54,275 @@ html, body {
   overflow: hidden;
 }
 
-/* ─── Header ────────────────────────────────────────────────────────────────── */
+.ambient {
+  position: absolute;
+  pointer-events: none;
+  border: 1px solid var(--hairline);
+  background:
+    linear-gradient(var(--hairline) 1px, transparent 1px),
+    linear-gradient(90deg, var(--hairline) 1px, transparent 1px);
+  background-size: 28px 28px;
+  opacity: 0.22;
+  mask-image: radial-gradient(circle at center, #000 0%, transparent 72%);
+}
+
+.ambient-a {
+  inset: -100px -120px auto auto;
+  width: 280px;
+  height: 220px;
+}
+
+.ambient-b {
+  inset: auto auto -110px -90px;
+  width: 260px;
+  height: 240px;
+}
+
+.app-header,
+.hero-panel,
+.service-card,
+.error-box {
+  position: relative;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
 .app-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 16px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow);
+  padding: 12px;
 }
 
 .brand {
   display: flex;
   align-items: center;
+  min-width: 0;
   gap: 10px;
 }
 
 .brand-logo {
-  width: 32px;
-  height: 32px;
-  border-radius: 6px;
+  width: 34px;
+  height: 34px;
+  border-radius: 7px;
   object-fit: cover;
-  border: 1px solid var(--border);
+  border: 1px solid var(--hairline);
+  background: var(--primary);
+}
+
+.brand h1,
+.hero-panel h2,
+.service-name,
+.diagnostics-details summary,
+.btn {
+  font-family: 'Geist', 'Inter', system-ui, sans-serif;
 }
 
 .brand h1 {
-  font-family: 'Geist', sans-serif;
   font-size: 14px;
   font-weight: 600;
-  color: var(--text);
+  line-height: 1.15;
   letter-spacing: -0.03em;
-  line-height: 1.2;
 }
 
 .brand-sub {
+  margin-top: 1px;
+  color: var(--muted);
   font-size: 11px;
-  color: var(--text-muted);
 }
 
-/* Status Badge */
 .status-badge {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 6px;
+  flex-shrink: 0;
+  gap: 7px;
+  min-height: 26px;
   padding: 4px 10px;
-  border-radius: 100px;
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  background: var(--surface-soft);
+  color: var(--text-soft);
   font-size: 11px;
   font-weight: 500;
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
 }
 
 .status-dot {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--text-muted);
-  transition: background 0.3s ease, box-shadow 0.3s ease;
+  background: var(--muted);
+  transition: background 0.2s ease, box-shadow 0.2s ease;
 }
 
 .status-badge[data-status="connected"] {
-  border-color: rgba(16, 185, 129, 0.2);
-  background: var(--green-dim);
-  color: var(--green);
+  border-color: rgba(16, 185, 129, 0.22);
+  background: var(--success-bg);
+  color: #047857;
 }
+
 .status-badge[data-status="connected"] .status-dot {
-  background: var(--green);
-  box-shadow: 0 0 6px var(--green);
+  background: var(--success);
+  box-shadow: 0 0 9px rgba(16, 185, 129, 0.55);
+}
+
+.status-badge[data-status="connecting"],
+.status-badge[data-status="authenticating"] {
+  border-color: rgba(245, 158, 11, 0.24);
+  background: rgba(245, 158, 11, 0.08);
+  color: #92400e;
 }
 
 .status-badge[data-status="connecting"] .status-dot,
 .status-badge[data-status="authenticating"] .status-dot {
-  background: var(--yellow);
-  animation: pulse 1s ease-in-out infinite;
+  background: var(--warning);
+  animation: pulse 1.1s ease-in-out infinite;
 }
 
 .status-badge[data-status="error"] {
-  border-color: rgba(220, 38, 38, 0.2);
-  background: var(--red-dim);
-  color: var(--red);
+  border-color: rgba(220, 38, 38, 0.22);
+  background: var(--danger-bg);
+  color: var(--danger);
 }
+
 .status-badge[data-status="error"] .status-dot {
-  background: var(--red);
+  background: var(--danger);
 }
 
-@keyframes pulse {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.4; transform: scale(0.9); }
-}
-
-/* ─── Status Panel ──────────────────────────────────────────────────────────── */
-.status-panel {
-  padding: 12px 16px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  color: var(--text-muted);
-  font-size: 12px;
-  box-shadow: var(--shadow);
-  text-align: left;
-  line-height: 1.4;
-  animation: slideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-@keyframes slideUp {
-  from { opacity: 0; transform: translateY(4px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-/* ─── Service Cards ─────────────────────────────────────────────────────────── */
-.services {
+.hero-panel {
   display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.service-card {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 12px 16px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow);
-  transition: border-color 0.2s ease, transform 0.2s ease;
-}
-
-.service-card:hover {
-  border-color: var(--border-strong);
-}
-
-.service-icon {
-  width: 28px;
-  height: 28px;
-  background: var(--bg);
-  border-radius: 6px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  border: 1px solid var(--border);
-}
-
-.service-icon svg {
-  width: 14px;
-  height: 14px;
-  color: var(--text-muted);
-  transition: color 0.2s ease, transform 0.2s ease;
-}
-
-.service-card:hover .service-icon svg {
-  color: var(--text);
-  transform: scale(1.05);
-}
-
-.service-info {
   flex: 1;
-  display: flex;
+  min-height: 0;
   flex-direction: column;
-  gap: 1px;
+  justify-content: space-between;
+  padding: 18px;
+  overflow: hidden;
 }
 
-.service-name {
-  font-family: 'Geist', sans-serif;
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text);
-  letter-spacing: -0.02em;
+.hero-panel::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0) 0%, rgba(244, 244, 243, 0.72) 100%),
+    radial-gradient(circle at 78% 18%, rgba(0, 0, 0, 0.05), transparent 32%);
+  pointer-events: none;
 }
 
-.service-state {
-  font-size: 11px;
-  color: var(--text-muted);
-}
-
-.service-indicator {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: rgba(0, 0, 0, 0.1);
-  flex-shrink: 0;
-  transition: all 0.3s ease;
-}
-
-.service-indicator[data-active="true"] {
-  background: var(--green);
-  box-shadow: 0 0 8px rgba(22, 163, 74, 0.4);
-}
-
-/* ─── Actions ───────────────────────────────────────────────────────────────── */
+.hero-copy,
 .actions {
-  display: flex;
-  flex-direction: column;
+  position: relative;
+}
+
+.eyebrow {
+  margin-bottom: 10px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.hero-panel h2 {
+  max-width: 350px;
+  font-size: 29px;
+  font-weight: 600;
+  letter-spacing: -0.05em;
+  line-height: 1.02;
+}
+
+#status-text {
+  max-width: 360px;
+  margin-top: 14px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.actions {
+  display: grid;
   gap: 8px;
-  margin-top: auto;
 }
 
 .btn {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
   width: 100%;
-  padding: 11px 16px;
+  min-height: 42px;
+  gap: 8px;
+  padding: 10px 14px;
+  border: 1px solid transparent;
   border-radius: 6px;
-  font-family: 'Geist', sans-serif;
   font-size: 13px;
   font-weight: 500;
+  letter-spacing: 0;
   cursor: pointer;
-  border: none;
-  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
-  letter-spacing: -0.01em;
+  transition: transform 0.18s ease, background 0.18s ease, border-color 0.18s ease, opacity 0.18s ease;
 }
 
 .btn:disabled {
-  opacity: 0.5;
   cursor: not-allowed;
+  opacity: 0.52;
 }
 
 .btn-primary {
-  background: var(--accent);
-  color: var(--surface);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+  background: var(--primary);
+  color: #ffffff;
 }
 
 .btn-primary:hover:not(:disabled) {
-  background: var(--accent-light);
-  transform: translateY(-0.5px);
-}
-
-.btn-primary:active:not(:disabled) {
-  transform: translateY(0);
+  background: var(--primary-hover);
+  transform: translateY(-1px);
 }
 
 .btn-ghost {
-  background: transparent;
-  color: var(--text-muted);
-  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.72);
+  border-color: var(--hairline);
+  color: var(--text-soft);
 }
 
 .btn-ghost:hover:not(:disabled) {
-  background: var(--surface-2);
+  background: var(--surface-soft);
+  border-color: var(--outline);
   color: var(--text);
-  border-color: var(--border-strong);
 }
 
 .btn-icon {
   font-style: normal;
-  font-size: 14px;
+  line-height: 1;
 }
 
-/* ─── Error Box ─────────────────────────────────────────────────────────────── */
 .error-box {
-  padding: 10px 14px;
-  background: var(--red-dim);
-  border: 1px solid rgba(220, 38, 38, 0.15);
-  border-radius: var(--radius);
-  color: var(--red);
+  padding: 10px 12px;
+  background: var(--danger-bg);
+  border-color: rgba(220, 38, 38, 0.16);
+  color: var(--danger);
   font-size: 11px;
-  line-height: 1.4;
-  margin-bottom: 4px;
+  line-height: 1.45;
 }
 
-/* ─── Footer ────────────────────────────────────────────────────────────────── */
-.app-footer {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  padding: 4px 10px;
-  font-size: 10px;
-  color: var(--text-muted);
-  border-top: 1px solid var(--border);
-  margin-top: 4px;
-}
-
-.app-footer strong {
-  color: var(--text);
-  font-weight: 500;
-}
-
-/* ─── Diagnostics Details Collapsible Section ──────────────────────────────── */
 .diagnostics-details {
-  margin-top: 8px;
-  border-top: 1px dashed var(--border);
-  padding-top: 10px;
+  position: relative;
+  padding: 0 2px;
 }
 
 .diagnostics-details summary {
-  font-family: 'Geist', sans-serif;
+  display: block;
+  color: var(--muted);
   font-size: 11px;
   font-weight: 500;
-  color: var(--text-muted);
+  text-align: center;
+  list-style: none;
   cursor: pointer;
   user-select: none;
-  outline: none;
-  text-align: center;
-  list-style: none; /* Hide default arrow */
-  display: block;
   transition: color 0.2s ease;
 }
 
 .diagnostics-details summary::-webkit-details-marker {
-  display: none; /* Hide Safari/Chrome arrow */
+  display: none;
 }
 
 .diagnostics-details summary:hover {
@@ -360,7 +332,6 @@ html, body {
 .diagnostics-details summary::after {
   content: " ▾";
   font-size: 9px;
-  vertical-align: middle;
 }
 
 .diagnostics-details[open] summary::after {
@@ -368,9 +339,118 @@ html, body {
 }
 
 .diagnostics-content {
-  margin-top: 10px;
   display: flex;
   flex-direction: column;
   gap: 10px;
-  animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  margin-top: 10px;
+  animation: slideUp 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.services {
+  display: grid;
+  gap: 8px;
+}
+
+.service-card {
+  display: grid;
+  grid-template-columns: 30px 1fr 10px;
+  align-items: center;
+  gap: 11px;
+  padding: 10px 12px;
+  box-shadow: none;
+  transition: border-color 0.18s ease, background 0.18s ease;
+}
+
+.service-card:hover {
+  border-color: var(--outline);
+  background: rgba(255, 255, 255, 0.82);
+}
+
+.service-icon {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  background: var(--surface-soft);
+  color: var(--muted);
+}
+
+.service-icon svg {
+  width: 15px;
+  height: 15px;
+}
+
+.service-info {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
+
+.service-name {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.service-state {
+  color: var(--muted);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.service-indicator {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.16);
+  transition: background 0.2s ease, box-shadow 0.2s ease;
+}
+
+.service-indicator[data-active="true"] {
+  background: var(--success);
+  box-shadow: 0 0 8px rgba(16, 185, 129, 0.45);
+}
+
+.app-footer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 2px 8px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.app-footer strong {
+  color: var(--text-soft);
+  font-weight: 500;
+}
+
+/* Defensive Clerk cleanup for any embedded Clerk auth surface. Auth behavior is untouched. */
+.cl-footer,
+.cl-footerAction,
+.cl-dividerRow,
+.cl-internal-1dauvpw,
+.cl-internal-b3fm6y,
+[data-clerk-element="footer"],
+[data-localization-key="badge__securedBy"],
+[data-localization-key="footerActionLink__signIn"],
+[data-localization-key="footerActionLink__signUp"] {
+  display: none !important;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.45; transform: scale(0.86); }
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(5px); }
+  to { opacity: 1; transform: translateY(0); }
 }

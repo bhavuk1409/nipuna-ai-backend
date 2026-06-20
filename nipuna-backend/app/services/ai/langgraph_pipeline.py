@@ -1,11 +1,11 @@
-"""LangGraph-based zero-hallucination agentic pipeline.
+"""LangGraph-based zero-hallucination agentic pipeline with real token/event streaming.
 
 Architecture:
-  START → node_build_tools → node_llm_call → route
-                                               ↓             ↓
-                                         execute_tools   final_answer
-                                               ↓
-                                         node_llm_call (loop back)
+  START -> build_tools -> llm_call -> router_logic
+                                        /       \
+                             execute_tools     finalize
+                                  /               \
+                       (loop back to llm_call)    END
 
 Zero-hallucination enforcement:
 1. System prompt strictly instructs LLM to ONLY use facts from tool results.
@@ -16,19 +16,6 @@ Zero-hallucination enforcement:
 6. Tool result payloads are truncated to prevent context overflow.
 7. Conversation history is windowed to last 20 messages (tool_call rows excluded).
 8. Max loop depth = 6, then transparent failure message.
-
-Tool loading strategy (fixes Composio slug mismatch):
-- For Composio-managed tools (Gmail, Slack, GitHub, etc.):
-    Load ACTUAL schemas from Composio API via get_available_actions().
-    These schemas already have the correct slug as `name`.
-    Both the LLM function call name AND execute slug are the same Composio slug.
-- For native tools (Tally, GSTN):
-    Use our curated PROVIDER_TOOLS_MAPPING schemas.
-    These map to native MCP server action names.
-
-Schema sanitisation (fixes Groq 400):
-- Strip any JSON-schema fields that Groq/Llama reject (e.g. "default").
-- Only allow: type, description, enum, items, properties, required.
 """
 
 from __future__ import annotations
@@ -37,16 +24,20 @@ import json
 import logging
 import re
 import uuid
-from collections.abc import AsyncGenerator
-from dataclasses import dataclass, field
-from typing import Callable, Literal
+import asyncio
+from collections.abc import AsyncGenerator, Callable
+from dataclasses import dataclass
+from typing import Annotated, Literal, TypedDict
 
 from sqlalchemy.ext.asyncio import AsyncSession
+from langchain_core.messages import BaseMessage, SystemMessage, HumanMessage, AIMessage, ToolMessage
+from langchain_core.callbacks import AsyncCallbackHandler
+from langchain_core.runnables import RunnableConfig
+from langgraph.graph import StateGraph, START, END
 
 from app.models.agent import Agent
-from app.models.conversation import Conversation, Message
+from app.models.conversation import Message
 from app.models.organization import Organization
-from app.services.ai.llm_client import LLMClient, LLMResponse
 from app.services.ai.sql_validator import validate_sql
 from app.services.ai.tool_definitions import map_tool_to_action, PROVIDER_TOOLS_MAPPING
 from app.services.mcp.gateway import execute_tool, get_available_tools_for_org
@@ -59,13 +50,11 @@ HISTORY_WINDOW = 20
 NATIVE_PROVIDERS = {"TALLY", "GSTN"}
 
 # Hard limits to avoid 413 Payload Too Large from Groq
-# Groq's llama-3.3-70b has a ~6000 TPM request limit on free tier;
-# each tool schema consumes ~150-400 tokens. Keep total tools small.
-MAX_TOOLS_PER_PROVIDER = 6      # max Composio actions loaded per provider
-MAX_TOOLS_TOTAL = 18            # absolute cap across all providers
-MAX_DESCRIPTION_CHARS = 120     # truncate long descriptions
+MAX_TOOLS_PER_PROVIDER = 6
+MAX_TOOLS_TOTAL = 18
+MAX_DESCRIPTION_CHARS = 125
 
-# Fields allowed in a JSON Schema property (Groq rejects "default", "examples", etc.)
+# Fields allowed in a JSON Schema property
 _ALLOWED_PROPERTY_KEYS = {"type", "description", "enum", "items", "properties", "required", "anyOf", "oneOf"}
 
 
@@ -123,13 +112,12 @@ def _sanitize_parameters(params: dict) -> dict:
 def _sanitize_tool(tool: dict) -> dict:
     """Return a clean, size-controlled tool schema safe for any LLM provider."""
     raw_desc = (tool.get("description") or "No description.").strip()
-    # Truncate description to stay within payload budget
     desc = raw_desc[:MAX_DESCRIPTION_CHARS] + "..." if len(raw_desc) > MAX_DESCRIPTION_CHARS else raw_desc
     return {
         "name": tool.get("name", ""),
         "description": desc,
         "parameters": _sanitize_parameters(tool.get("parameters", {})),
-        # Preserve internal routing fields — not sent to LLM
+        # Preserve internal routing fields
         "provider": tool.get("provider", ""),
         "action": tool.get("action", ""),
     }
@@ -162,37 +150,25 @@ class PipelineResult:
 
 
 # ──────────────────────────────────────────────────────────────────
-# State dataclass
+# State definition
 # ──────────────────────────────────────────────────────────────────
 
-@dataclass
-class AgentState:
+class GraphState(TypedDict):
+    messages: list[BaseMessage]
     org: Organization
     agent: Agent
     db: AsyncSession
     conversation_id: str
-
-    messages: list[dict] = field(default_factory=list)
-
-    # Tool schemas to send to LLM (already sanitised)
-    tools: list[dict] = field(default_factory=list)
-
-    # Maps LLM function name → (provider, action_slug)
-    # For Composio tools:  fn_name == action_slug (they're the same Composio slug)
-    # For native tools:    action_slug is the MCP server action name
-    tool_route_map: dict[str, tuple[str, str]] = field(default_factory=dict)
-
-    # Accumulated grounded evidence from tool executions
-    tool_evidence: dict[str, str] = field(default_factory=dict)
-
-    loop_count: int = 0
-    max_loops: int = 6
-    tool_calls_made: int = 0
-
-    final_answer: str | None = None
-
-    # Optional async streaming callback
-    stream_callback: Callable[[StreamEvent], None] | None = None
+    rag_chunks: list[dict]
+    
+    tools: list[dict]
+    tool_route_map: dict[str, tuple[str, str]]
+    tool_evidence: dict[str, str]
+    
+    loop_count: int
+    max_loops: int
+    tool_calls_made: int
+    final_answer: str | None
 
 
 # ──────────────────────────────────────────────────────────────────
@@ -215,70 +191,89 @@ TOOL RESULTS (your only facts):
 {knowledge_base}"""
 
 
-def _build_system_prompt(state: AgentState, rag_chunks: list[dict]) -> str:
-    # List connected providers (deduplicated)
+def _build_system_prompt_for_state(
+    agent_name: str,
+    org_name: str,
+    domain: str,
+    objective: str,
+    tools: list[dict],
+    tool_evidence: dict[str, str],
+    rag_chunks: list[dict],
+) -> str:
     seen: set[str] = set()
     providers: list[str] = []
-    for t in state.tools:
+    for t in tools:
         p = t.get("provider", "")
         if p and p not in seen:
             seen.add(p)
             providers.append(p)
 
-    connected_str = ", ".join(providers) if providers else "None (connect tools in Settings > Integrations)"
+    connected_str = ", ".join(providers) if providers else "None (connect tools in Integrations)"
 
-    evidence_parts = [f"[{name}]\n{result}" for name, result in state.tool_evidence.items()]
+    evidence_parts = [f"[{name}]\n{result}" for name, result in tool_evidence.items()]
     evidence_str = "\n\n".join(evidence_parts) if evidence_parts else "(none yet)"
 
     kb_lines = [f"[KB] {c.get('text', '')[:500]}" for c in rag_chunks[:5]]
     kb_section = "\nKNOWLEDGE BASE:\n" + "\n".join(kb_lines) if kb_lines else ""
 
     return _SYSTEM_TEMPLATE.format(
-        agent_name=state.agent.name,
-        org_name=state.org.name,
-        domain=getattr(state.agent, "domain", "General"),
-        objective=getattr(state.agent, "objective", "Help the user"),
+        agent_name=agent_name,
+        org_name=org_name,
+        domain=domain,
+        objective=objective,
         connected_tools=connected_str,
         tool_evidence=evidence_str,
         knowledge_base=kb_section,
     )
 
 
-def _refresh_system_evidence(state: AgentState) -> None:
-    """Update only the tool-evidence section of the system message in-place."""
-    if not state.messages or state.messages[0]["role"] != "system":
-        return
+# ──────────────────────────────────────────────────────────────────
+# Grounding enforcement
+# ──────────────────────────────────────────────────────────────────
 
-    evidence_parts = [f"[{name}]\n{result}" for name, result in state.tool_evidence.items()]
-    evidence_str = "\n\n".join(evidence_parts) if evidence_parts else "No tool calls made yet."
+def _enforce_grounding_for_state(answer: str, tool_evidence: dict[str, str]) -> str:
+    """If tool evidence exists but LLM forgot to cite sources, append a transparent evidence footer."""
+    if not tool_evidence:
+        return answer
 
-    old = state.messages[0]["content"]
-    new = re.sub(
-        r"(TOOL RESULTS \(your only facts\)\n══.*?\n)(.*?)(\n══|$)",
-        lambda m: m.group(1) + evidence_str + (m.group(3) if m.group(3) else ""),
-        old,
-        flags=re.DOTALL,
-    )
-    state.messages[0]["content"] = new if new != old else old
+    has_citation = bool(re.search(r"\[SOURCE:", answer, re.IGNORECASE))
+    if has_citation:
+        return answer
+
+    footer = "\n\n---\n**Data Sources Used:**"
+    for tool_name, result_str in tool_evidence.items():
+        snippet = result_str[:400] + "..." if len(result_str) > 400 else result_str
+        footer += f"\n\n**[{tool_name}]**\n```\n{snippet}\n```"
+
+    return answer + footer
 
 
 # ──────────────────────────────────────────────────────────────────
-# Node: build tools context
+# Async token streaming callback handler
 # ──────────────────────────────────────────────────────────────────
 
-async def _node_build_tools(state: AgentState, rag_chunks: list[dict]) -> AgentState:
-    """
-    Load tools for the org.
+class TokenStreamHandler(AsyncCallbackHandler):
+    """Callback handler to stream generated tokens to our SSE channel."""
+    def __init__(self, callback_fn: Callable[[StreamEvent], None]):
+        self.callback_fn = callback_fn
 
-    Strategy:
-    - Composio tools (Gmail, Slack, etc.): fetch ACTUAL schemas from Composio API.
-      The `name` in those schemas IS the Composio execution slug.
-      Capped at MAX_TOOLS_PER_PROVIDER to avoid 413 Payload Too Large.
-    - Native tools (Tally, GSTN): use our curated PROVIDER_TOOLS_MAPPING.
-      These have explicit `provider` and `action` fields for routing.
-    """
+    async def on_llm_new_token(self, token: str, **kwargs) -> None:
+        if token:
+            await self.callback_fn(StreamEvent(type="token", content=token))
+
+
+# ──────────────────────────────────────────────────────────────────
+# Graph Nodes
+# ──────────────────────────────────────────────────────────────────
+
+async def node_build_tools(state: GraphState, config: RunnableConfig) -> dict:
+    org = state["org"]
+    agent = state["agent"]
+    db = state["db"]
+    callback = config.get("configurable", {}).get("stream_callback")
+    
     try:
-        connected_map = await get_available_tools_for_org(str(state.org.id), state.db)
+        connected_map = await get_available_tools_for_org(str(org.id), db)
     except Exception as exc:
         logger.warning("get_available_tools_for_org failed: %s", exc)
         connected_map = {}
@@ -288,13 +283,10 @@ async def _node_build_tools(state: AgentState, rag_chunks: list[dict]) -> AgentS
 
     for provider, definitions in connected_map.items():
         if len(tools) >= MAX_TOOLS_TOTAL:
-            logger.debug("Tool cap (%d) reached, skipping provider %s", MAX_TOOLS_TOTAL, provider)
             break
-
         p = provider.upper()
 
         if p in NATIVE_PROVIDERS:
-            # Use our curated schemas — these have correct action names for the MCP server
             curated = PROVIDER_TOOLS_MAPPING.get(p, [])[:MAX_TOOLS_PER_PROVIDER]
             for tool in curated:
                 if len(tools) >= MAX_TOOLS_TOTAL:
@@ -302,10 +294,7 @@ async def _node_build_tools(state: AgentState, rag_chunks: list[dict]) -> AgentS
                 clean = _sanitize_tool(tool)
                 tools.append(clean)
                 tool_route_map[clean["name"]] = (p, tool.get("action", clean["name"]))
-
         elif definitions:
-            # Use ACTUAL Composio schemas — `name` field IS the executable slug.
-            # Cap per-provider to avoid 413 (Gmail alone returns 50+ schemas).
             for tool_def in definitions[:MAX_TOOLS_PER_PROVIDER]:
                 if len(tools) >= MAX_TOOLS_TOTAL:
                     break
@@ -315,173 +304,211 @@ async def _node_build_tools(state: AgentState, rag_chunks: list[dict]) -> AgentS
                 clean = _sanitize_tool({
                     **tool_def,
                     "provider": p,
-                    "action": fn_name,  # For Composio: fn_name == execution slug
+                    "action": fn_name,
                 })
                 tools.append(clean)
                 tool_route_map[fn_name] = (p, fn_name)
 
     logger.info("Built tool list: %d tools from %d providers", len(tools), len(connected_map))
-    state.tools = tools
-    state.tool_route_map = tool_route_map
-
-    prompt = _build_system_prompt(state, rag_chunks)
-    if state.messages and state.messages[0]["role"] == "system":
-        state.messages[0]["content"] = prompt
+    
+    prompt = _build_system_prompt_for_state(
+        agent_name=agent.name,
+        org_name=org.name,
+        domain=getattr(agent, "domain", "General"),
+        objective=getattr(agent, "objective", "Help the user"),
+        tools=tools,
+        tool_evidence=state.get("tool_evidence", {}),
+        rag_chunks=state.get("rag_chunks", []),
+    )
+    
+    current_msgs = list(state.get("messages", []))
+    system_msg = SystemMessage(content=prompt)
+    
+    if current_msgs and isinstance(current_msgs[0], SystemMessage):
+        current_msgs[0] = system_msg
     else:
-        state.messages.insert(0, {"role": "system", "content": prompt})
+        current_msgs.insert(0, system_msg)
 
-    if state.stream_callback:
-        await state.stream_callback(StreamEvent(
+    if callback:
+        await callback(StreamEvent(
             type="thinking",
             content=f"Loaded {len(tools)} tools from {len(connected_map)} connected integrations.",
         ))
 
-    return state
+    return {
+        "messages": current_msgs,
+        "tools": tools,
+        "tool_route_map": tool_route_map,
+    }
 
 
-# ──────────────────────────────────────────────────────────────────
-# Node: LLM call
-# ──────────────────────────────────────────────────────────────────
-
-async def _node_llm_call(state: AgentState, llm: LLMClient) -> AgentState:
-    if state.stream_callback:
-        await state.stream_callback(StreamEvent(type="thinking", content="Reasoning..."))
-
-    # Build LLM-safe tool list (strip internal routing fields)
-    llm_tools: list[dict] | None = None
-    if state.tools:
-        llm_tools = [
-            {
-                "name": t["name"],
-                "description": t["description"],
-                "parameters": t["parameters"],
-            }
-            for t in state.tools
-        ]
-
-    try:
-        response: LLMResponse = await llm.chat_with_tools(
-            state.messages,
-            tools=llm_tools,
-        )
-    except Exception as exc:
-        logger.error("LLM call failed: %s", exc)
-        state.final_answer = (
-            "I encountered an error contacting the AI service. Please try again shortly."
-        )
-        return state
-
-    if response.tool_calls:
-        state.messages.append({
-            "role": "assistant",
-            # IMPORTANT: content must be None (not "") when tool_calls present.
-            # Groq rejects empty-string content alongside tool_calls.
-            "content": response.content if response.content else None,
-            "tool_calls": response.tool_calls,
-        })
-        await _persist_message(
-            state=state,
-            role="assistant",
-            content=response.content or "Invoking integration tool...",
-            tokens_used=response.tokens_used,
-            tool_call=True,
+async def node_llm_call(state: GraphState, config: RunnableConfig) -> dict:
+    from app.config import get_settings
+    settings = get_settings()
+    callback = config.get("configurable", {}).get("stream_callback")
+    
+    if callback:
+        await callback(StreamEvent(type="thinking", content="Reasoning..."))
+        
+    provider = (settings.llm_provider or "groq").lower()
+    
+    if provider == "openai":
+        from langchain_openai import ChatOpenAI
+        llm = ChatOpenAI(
+            api_key=settings.openai_api_key,
+            model="gpt-4o",
+            temperature=0.0,
+            streaming=True,
         )
     else:
-        raw_answer = response.content or ""
-        state.final_answer = _enforce_grounding(raw_answer, state)
-
-        if state.stream_callback:
-            await state.stream_callback(StreamEvent(type="token", content=state.final_answer))
-
-    return state
-
-
-# ──────────────────────────────────────────────────────────────────
-# Grounding enforcement
-# ──────────────────────────────────────────────────────────────────
-
-def _enforce_grounding(answer: str, state: AgentState) -> str:
-    """
-    If tool evidence exists but LLM forgot to cite sources,
-    append a transparent evidence footer so users can verify.
-    """
-    if not state.tool_evidence:
-        return answer
-
-    has_citation = bool(re.search(r"\[SOURCE:", answer, re.IGNORECASE))
-    if has_citation:
-        return answer
-
-    footer = "\n\n---\n**Data Sources Used:**"
-    for tool_name, result_str in state.tool_evidence.items():
-        snippet = result_str[:400] + "..." if len(result_str) > 400 else result_str
-        footer += f"\n\n**[{tool_name}]**\n```\n{snippet}\n```"
-
-    return answer + footer
-
-
-# ──────────────────────────────────────────────────────────────────
-# Node: execute tools
-# ──────────────────────────────────────────────────────────────────
-
-async def _node_execute_tools(state: AgentState) -> AgentState:
-    last_msg = state.messages[-1]
-    tool_calls: list[dict] = last_msg.get("tool_calls", [])
-
-    for tc in tool_calls:
-        fn_name: str = tc["function"]["name"]
-        args_str: str = tc["function"]["arguments"]
-        call_id: str = tc.get("id", "")
-
-        try:
-            params = json.loads(args_str)
-        except Exception:
-            params = {}
-
-        # Resolve provider and action from the route map
-        if fn_name in state.tool_route_map:
-            provider, action = state.tool_route_map[fn_name]
-        else:
-            # Fallback: try our curated mapping
-            mapped = map_tool_to_action(fn_name)
-            provider, action = mapped if mapped else (fn_name.upper(), fn_name)
-
-        logger.info(
-            "Executing tool: fn=%s provider=%s action=%s params_keys=%s",
-            fn_name, provider, action, list(params.keys()),
+        from langchain_groq import ChatGroq
+        llm = ChatGroq(
+            api_key=settings.groq_api_key,
+            model=settings.groq_model or "llama-3.3-70b-versatile",
+            temperature=0.0,
+            streaming=True,
         )
 
-        if state.stream_callback:
-            await state.stream_callback(StreamEvent(
+    tools = state.get("tools", [])
+    if tools:
+        llm_tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": t["name"],
+                    "description": t["description"],
+                    "parameters": t["parameters"],
+                }
+            }
+            for t in tools
+        ]
+        llm = llm.bind_tools(llm_tools)
+
+    handler = TokenStreamHandler(callback) if callback else None
+    callbacks = [handler] if handler else []
+    
+    messages = state["messages"]
+    
+    try:
+        response = await llm.ainvoke(messages, config={"callbacks": callbacks})
+    except Exception as exc:
+        logger.error("LLM call failed: %s", exc)
+        error_str = str(exc)
+        lower_err = error_str.lower()
+        is_rate_limit = (
+            "429" in error_str
+            or "rate_limit_exceeded" in lower_err
+            or "rate limit" in lower_err
+        )
+
+        if is_rate_limit and ("tokens per day" in lower_err or " tpd" in lower_err or "tpd)" in lower_err):
+            user_msg = (
+                "Nipuna AI has reached its daily AI usage limit for this model. "
+                "Please try again later, or contact support to increase your capacity."
+            )
+        elif is_rate_limit:
+            user_msg = (
+                "Nipuna AI is receiving too many requests right now. "
+                "Please wait a moment and try again."
+            )
+        else:
+            user_msg = "I encountered an error contacting the AI service. Please try again shortly."
+
+        if callback:
+            await callback(StreamEvent(type="error", content=user_msg))
+
+        return {"final_answer": user_msg}
+
+    new_messages = list(messages)
+    new_messages.append(response)
+    
+    tokens_used = response.response_metadata.get("token_usage", {}).get("total_tokens", 0)
+
+    if response.tool_calls:
+        content_to_save = response.content or "Invoking integration tool..."
+        await _persist_message(
+            org_id=state["org"].id,
+            conversation_id=state["conversation_id"],
+            db=state["db"],
+            role="assistant",
+            content=content_to_save,
+            tokens_used=tokens_used,
+            tool_call=True,
+        )
+        return {
+            "messages": new_messages,
+        }
+    else:
+        raw_answer = response.content or ""
+        final_answer = _enforce_grounding_for_state(raw_answer, state.get("tool_evidence", {}))
+        return {
+            "messages": new_messages,
+            "final_answer": final_answer,
+        }
+
+
+async def node_execute_tools(state: GraphState, config: RunnableConfig) -> dict:
+    callback = config.get("configurable", {}).get("stream_callback")
+    db = state["db"]
+    org = state["org"]
+    
+    last_msg = state["messages"][-1]
+    tool_calls = getattr(last_msg, "tool_calls", [])
+    
+    tool_route_map = state["tool_route_map"]
+    tool_evidence = dict(state.get("tool_evidence", {}))
+    tool_calls_made = state.get("tool_calls_made", 0)
+    loop_count = state.get("loop_count", 0)
+    
+    new_messages = list(state["messages"])
+    
+    for tc in tool_calls:
+        fn_name = tc["name"]
+        args = tc["args"]
+        call_id = tc["id"]
+        
+        if fn_name in tool_route_map:
+            provider, action = tool_route_map[fn_name]
+        else:
+            mapped = map_tool_to_action(fn_name)
+            provider, action = mapped if mapped else (fn_name.upper(), fn_name)
+            
+        logger.info(
+            "Executing tool: fn=%s provider=%s action=%s params_keys=%s",
+            fn_name, provider, action, list(args.keys()),
+        )
+        
+        if callback:
+            await callback(StreamEvent(
                 type="tool_start",
                 tool_name=fn_name,
                 content=f"Calling {provider} → {action}",
             ))
-
-        # SQL safety gate for Tally
+            
+        # SQL safety check for Tally
         if provider == "TALLY" and action == "query-database":
-            sql = params.get("sql", "")
+            sql = args.get("sql", "")
             valid, reason = validate_sql(sql)
             if not valid:
-                result_dict: dict = {
+                result_dict = {
                     "error": f"SQL blocked by security validator: {reason}",
                     "result": None,
                 }
-                logger.warning("Blocked unsafe Tally SQL for org=%s reason=%s", state.org.id, reason)
+                logger.warning("Blocked unsafe Tally SQL for org=%s reason=%s", org.id, reason)
             else:
-                result_dict = await _safe_execute(provider, action, params, state)
+                result_dict = await _safe_execute(provider, action, args, state)
         else:
-            result_dict = await _safe_execute(provider, action, params, state)
-
+            result_dict = await _safe_execute(provider, action, args, state)
+            
         result_str = _format_result(fn_name, result_dict)
-
-        # Store as grounded evidence
-        state.tool_evidence[fn_name] = result_str
-        state.tool_calls_made += 1
-
-        # Persist tool call to DB
+        
+        tool_evidence[fn_name] = result_str
+        tool_calls_made += 1
+        
         await _persist_message(
-            state=state,
+            org_id=org.id,
+            conversation_id=state["conversation_id"],
+            db=db,
             role="assistant",
             content=f"[Tool call: {fn_name}]",
             tokens_used=0,
@@ -490,32 +517,77 @@ async def _node_execute_tools(state: AgentState) -> AgentState:
             tool_action=action,
             tool_result=json.dumps(result_dict),
         )
-
-        # Inject tool result into message thread
-        state.messages.append({
-            "role": "tool",
-            "tool_call_id": call_id,
-            "name": fn_name,
-            "content": result_str,
-        })
-
-        if state.stream_callback:
-            await state.stream_callback(StreamEvent(
+        
+        new_messages.append(ToolMessage(
+            content=result_str,
+            tool_call_id=call_id,
+            name=fn_name,
+        ))
+        
+        if callback:
+            await callback(StreamEvent(
                 type="tool_end",
                 tool_name=fn_name,
                 tool_result=result_str[:300] + "..." if len(result_str) > 300 else result_str,
             ))
+            
+    # Refresh system prompt's evidence (in the first message)
+    if new_messages and isinstance(new_messages[0], SystemMessage):
+        prompt = _build_system_prompt_for_state(
+            agent_name=state["agent"].name,
+            org_name=state["org"].name,
+            domain=getattr(state["agent"], "domain", "General"),
+            objective=getattr(state["agent"], "objective", "Help the user"),
+            tools=state["tools"],
+            tool_evidence=tool_evidence,
+            rag_chunks=state.get("rag_chunks", []),
+        )
+        new_messages[0] = SystemMessage(content=prompt)
+        
+    return {
+        "messages": new_messages,
+        "tool_evidence": tool_evidence,
+        "tool_calls_made": tool_calls_made,
+        "loop_count": loop_count + 1,
+    }
 
-    # Refresh evidence in system prompt so LLM sees fresh grounding
-    _refresh_system_evidence(state)
-    state.loop_count += 1
-    return state
+
+async def node_finalize(state: GraphState, config: RunnableConfig) -> dict:
+    final_answer = state.get("final_answer")
+    if final_answer is None:
+        final_answer = (
+            "I reached the maximum number of tool calls without a complete answer. "
+            "Please try rephrasing or breaking the question into smaller parts."
+        )
+    return {"final_answer": final_answer}
 
 
-async def _safe_execute(provider: str, action: str, params: dict, state: AgentState) -> dict:
+# ──────────────────────────────────────────────────────────────────
+# Conditional router
+# ──────────────────────────────────────────────────────────────────
+
+def router_logic(state: GraphState) -> Literal["execute_tools", "finalize"]:
+    if state.get("final_answer") is not None:
+        return "finalize"
+        
+    if state.get("loop_count", 0) >= state.get("max_loops", 6):
+        return "finalize"
+        
+    last_msg = state["messages"][-1]
+    if getattr(last_msg, "tool_calls", None):
+        return "execute_tools"
+        
+    return "finalize"
+
+
+# ──────────────────────────────────────────────────────────────────
+# Helper execution / formatting / DB saving
+# ──────────────────────────────────────────────────────────────────
+
+async def _safe_execute(provider: str, action: str, params: dict, state: GraphState) -> dict:
     try:
         return await execute_tool(
-            org_id=str(state.org.id),
+            org_id=str(state["org"].id),
             tool_name=provider,
             action=action,
             params=params,
@@ -544,12 +616,10 @@ def _format_result(tool_name: str, result_dict: dict) -> str:
     return formatted
 
 
-# ──────────────────────────────────────────────────────────────────
-# DB persistence helper
-# ──────────────────────────────────────────────────────────────────
-
 async def _persist_message(
-    state: AgentState,
+    org_id: uuid.UUID,
+    conversation_id: str,
+    db: AsyncSession,
     role: str,
     content: str,
     tokens_used: int = 0,
@@ -558,10 +628,10 @@ async def _persist_message(
     tool_action: str | None = None,
     tool_result: str | None = None,
 ) -> None:
-    """Persist a message to the DB without raising — pipeline must not fail on DB errors."""
+    """Persist a message to the DB without raising."""
     try:
         msg = Message(
-            conversation_id=uuid.UUID(state.conversation_id),
+            conversation_id=uuid.UUID(conversation_id),
             role=role,
             content=content,
             tokens_used=tokens_used,
@@ -570,36 +640,41 @@ async def _persist_message(
             tool_action=tool_action,
             tool_result=tool_result,
         )
-        state.db.add(msg)
-        await state.db.flush()
+        db.add(msg)
+        await db.flush()
     except Exception as exc:
         logger.warning("Failed to persist pipeline message: %s", exc)
 
 
 # ──────────────────────────────────────────────────────────────────
-# Router
+# Graph compilation
 # ──────────────────────────────────────────────────────────────────
 
-def _route(state: AgentState) -> Literal["execute_tools", "final_answer"]:
-    if state.final_answer is not None:
-        return "final_answer"
+workflow = StateGraph(GraphState)
 
-    if state.loop_count >= state.max_loops:
-        state.final_answer = (
-            "I reached the maximum number of tool calls without a complete answer. "
-            "Please try rephrasing or breaking the question into smaller parts."
-        )
-        return "final_answer"
+workflow.add_node("build_tools", node_build_tools)
+workflow.add_node("llm_call", node_llm_call)
+workflow.add_node("execute_tools", node_execute_tools)
+workflow.add_node("finalize", node_finalize)
 
-    last = state.messages[-1] if state.messages else {}
-    if last.get("role") == "assistant" and last.get("tool_calls"):
-        return "execute_tools"
+workflow.set_entry_point("build_tools")
+workflow.add_edge("build_tools", "llm_call")
+workflow.add_conditional_edges(
+    "llm_call",
+    router_logic,
+    {
+        "execute_tools": "execute_tools",
+        "finalize": "finalize",
+    }
+)
+workflow.add_edge("execute_tools", "llm_call")
+workflow.add_edge("finalize", END)
 
-    return "final_answer"
+graph = workflow.compile()
 
 
 # ──────────────────────────────────────────────────────────────────
-# Public entrypoint — standard (non-streaming)
+# Public endpoints
 # ──────────────────────────────────────────────────────────────────
 
 async def run_langgraph_pipeline(
@@ -611,10 +686,7 @@ async def run_langgraph_pipeline(
     conversation_id: str | None = None,
     stream_callback: Callable[[StreamEvent], None] | None = None,
 ) -> PipelineResult:
-    """
-    Main entrypoint. Runs the full LangGraph-style agentic loop with
-    zero-hallucination enforcement.
-    """
+    """Main entrypoint. Runs the full LangGraph StateGraph pipeline."""
     if not conversation_history:
         return PipelineResult(
             answer=f"{agent.name} is ready. How can I help you?",
@@ -633,68 +705,46 @@ async def run_langgraph_pipeline(
             tool_calls_made=0,
         )
 
-    # Window history to last N CLEAN messages.
-    # IMPORTANT: exclude tool_call=True messages — they're internal pipeline state
-    # (assistant "Invoking tool..." messages or tool result rows) and confuse the LLM
-    # if included without their companion tool_calls / tool response structure.
-    window = conversation_history[-HISTORY_WINDOW * 2:]  # wider slice before filtering
-    formatted: list[dict] = []
-    for m in window:
-        if m.role not in ("user", "assistant"):
-            continue
-        if getattr(m, "tool_call", False):
-            continue  # skip internal tool-call bookkeeping rows
-        formatted.append({"role": m.role, "content": m.content or ""})
+    formatted = _db_messages_to_langchain(conversation_history[-HISTORY_WINDOW:])
 
-    # Keep only the last HISTORY_WINDOW messages after filtering
-    formatted = formatted[-HISTORY_WINDOW:]
-
-    state = AgentState(
+    state = GraphState(
+        messages=formatted,
         org=org,
         agent=agent,
         db=db,
         conversation_id=conversation_id or "",
-        messages=formatted,
-        stream_callback=stream_callback,
+        rag_chunks=rag_chunks or [],
+        tools=[],
+        tool_route_map={},
+        tool_evidence={},
+        loop_count=0,
+        max_loops=6,
+        tool_calls_made=0,
+        final_answer=None,
     )
 
-    # Step 1: Load tools + build system prompt
-    state = await _node_build_tools(state, rag_chunks or [])
+    config = {}
+    if stream_callback:
+        config["configurable"] = {"stream_callback": stream_callback}
 
-    # Step 2: Agentic loop
-    llm = LLMClient()
+    final_state = await graph.ainvoke(state, config=config)
 
-    while True:
-        state = await _node_llm_call(state, llm)
-
-        decision = _route(state)
-        if decision == "final_answer":
-            break
-
-        # execute_tools path
-        state = await _node_execute_tools(state)
-        # loop back to llm_call
-
-    answer = state.final_answer or "I was unable to generate a response."
+    answer = final_state.get("final_answer") or "I was unable to generate a response."
 
     if stream_callback:
         await stream_callback(StreamEvent(
             type="done",
             content=answer,
             conversation_id=conversation_id,
-            tool_calls_made=state.tool_calls_made,
+            tool_calls_made=final_state.get("tool_calls_made", 0),
         ))
 
     return PipelineResult(
         answer=answer,
         conversation_id=conversation_id or "",
-        tool_calls_made=state.tool_calls_made,
+        tool_calls_made=final_state.get("tool_calls_made", 0),
     )
 
-
-# ──────────────────────────────────────────────────────────────────
-# Public entrypoint — streaming (async generator)
-# ──────────────────────────────────────────────────────────────────
 
 async def run_langgraph_pipeline_stream(
     org: Organization,
@@ -704,32 +754,61 @@ async def run_langgraph_pipeline_stream(
     rag_chunks: list[dict] | None = None,
     conversation_id: str | None = None,
 ) -> AsyncGenerator[StreamEvent, None]:
-    """
-    Streaming variant — yields StreamEvent objects as the pipeline executes.
-    Used by the SSE endpoint.
-    """
-    events: list[StreamEvent] = []
+    """Streaming entrypoint. Yields events in real time using an internal async queue."""
+    queue = asyncio.Queue()
 
-    async def collect_event(event: StreamEvent) -> None:
-        events.append(event)
+    async def stream_callback(event: StreamEvent) -> None:
+        await queue.put(event)
 
-    result = await run_langgraph_pipeline(
+    formatted = _db_messages_to_langchain(conversation_history[-HISTORY_WINDOW:])
+
+    state = GraphState(
+        messages=formatted,
         org=org,
         agent=agent,
-        conversation_history=conversation_history,
         db=db,
-        rag_chunks=rag_chunks,
-        conversation_id=conversation_id,
-        stream_callback=collect_event,
+        conversation_id=conversation_id or "",
+        rag_chunks=rag_chunks or [],
+        tools=[],
+        tool_route_map={},
+        tool_evidence={},
+        loop_count=0,
+        max_loops=6,
+        tool_calls_made=0,
+        final_answer=None,
     )
 
-    for event in events:
-        yield event
-
-    if not any(e.type == "done" for e in events):
-        yield StreamEvent(
-            type="done",
-            content=result.answer,
-            conversation_id=result.conversation_id,
-            tool_calls_made=result.tool_calls_made,
+    # Launch StateGraph in an independent background task
+    task = asyncio.create_task(
+        graph.ainvoke(
+            state,
+            config={"configurable": {"stream_callback": stream_callback}}
         )
+    )
+
+    # Read events from the queue and yield them to the SSE connection in real time
+    while not task.done() or not queue.empty():
+        try:
+            event = await asyncio.wait_for(queue.get(), timeout=0.05)
+            yield event
+            queue.task_done()
+        except asyncio.TimeoutError:
+            continue
+
+    # Raise task exception if any error occurred during execution
+    if task.done() and task.exception():
+        raise task.exception()
+
+
+def _db_messages_to_langchain(history: list[Message]) -> list[BaseMessage]:
+    formatted: list[BaseMessage] = []
+    for m in history:
+        if m.role not in ("user", "assistant"):
+            continue
+        if getattr(m, "tool_call", False):
+            continue
+        if m.role == "user":
+            formatted.append(HumanMessage(content=m.content or ""))
+        elif m.role == "assistant":
+            formatted.append(AIMessage(content=m.content or ""))
+    return formatted
