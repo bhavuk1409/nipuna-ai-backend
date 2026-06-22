@@ -4,7 +4,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-async def send_email(to: str, subject: str, html: str) -> None:
+async def send_email(to: str, subject: str, html: str, from_email: str = "alerts@nipunaai.in") -> None:
     from app.config import get_settings
 
     settings = get_settings()
@@ -27,7 +27,7 @@ async def send_email(to: str, subject: str, html: str) -> None:
                         "Content-Type": "application/json",
                     },
                     json={
-                        "from": "alerts@nipunaai.in",
+                        "from": from_email,
                         "to": to,
                         "subject": subject,
                         "html": html,

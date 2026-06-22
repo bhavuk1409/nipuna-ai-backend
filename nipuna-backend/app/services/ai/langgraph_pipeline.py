@@ -169,6 +169,12 @@ class GraphState(TypedDict):
     max_loops: int
     tool_calls_made: int
     final_answer: str | None
+    high_intel: bool
+    query_datasources: bool
+    tone: str | None
+    currency: str | None
+    memory: bool | None
+    attachments: list[str] | None
 
 
 # ──────────────────────────────────────────────────────────────────
@@ -186,6 +192,10 @@ RULES (MANDATORY):
 
 CONNECTED INTEGRATIONS: {connected_tools}
 
+{personalization}
+
+{attachments_text}
+
 TOOL RESULTS (your only facts):
 {tool_evidence}
 {knowledge_base}"""
@@ -199,6 +209,9 @@ def _build_system_prompt_for_state(
     tools: list[dict],
     tool_evidence: dict[str, str],
     rag_chunks: list[dict],
+    tone: str | None = None,
+    currency: str | None = None,
+    attachments: list[str] | None = None,
 ) -> str:
     seen: set[str] = set()
     providers: list[str] = []
@@ -215,6 +228,20 @@ def _build_system_prompt_for_state(
 
     kb_lines = [f"[KB] {c.get('text', '')[:500]}" for c in rag_chunks[:5]]
     kb_section = "\nKNOWLEDGE BASE:\n" + "\n".join(kb_lines) if kb_lines else ""
+    
+    personalization_parts = []
+    if tone:
+        personalization_parts.append(f"Tone: {tone.capitalize()}")
+    if currency:
+        personalization_parts.append(f"Currency format: {currency}")
+    
+    personalization_str = ""
+    if personalization_parts:
+        personalization_str = "PERSONALIZATION PREFERENCES:\n" + "\n".join(personalization_parts)
+        
+    attachments_str = ""
+    if attachments and isinstance(attachments, list) and len(attachments) > 0:
+        attachments_str = "ATTACHED FILES (User context):\n" + "\n\n---\n".join(attachments)
 
     return _SYSTEM_TEMPLATE.format(
         agent_name=agent_name,
@@ -224,6 +251,8 @@ def _build_system_prompt_for_state(
         connected_tools=connected_str,
         tool_evidence=evidence_str,
         knowledge_base=kb_section,
+        personalization=personalization_str,
+        attachments_text=attachments_str,
     )
 
 
@@ -271,12 +300,14 @@ async def node_build_tools(state: GraphState, config: RunnableConfig) -> dict:
     agent = state["agent"]
     db = state["db"]
     callback = config.get("configurable", {}).get("stream_callback")
+    query_datasources = state.get("query_datasources", True)
     
-    try:
-        connected_map = await get_available_tools_for_org(str(org.id), db)
-    except Exception as exc:
-        logger.warning("get_available_tools_for_org failed: %s", exc)
-        connected_map = {}
+    connected_map = {}
+    if query_datasources:
+        try:
+            connected_map = await get_available_tools_for_org(str(org.id), db)
+        except Exception as exc:
+            logger.warning("get_available_tools_for_org failed: %s", exc)
 
     tools: list[dict] = []
     tool_route_map: dict[str, tuple[str, str]] = {}
@@ -351,12 +382,13 @@ async def node_llm_call(state: GraphState, config: RunnableConfig) -> dict:
         await callback(StreamEvent(type="thinking", content="Reasoning..."))
         
     provider = (settings.llm_provider or "groq").lower()
+    high_intel = state.get("high_intel", True)
     
     if provider == "openai":
         from langchain_openai import ChatOpenAI
         llm = ChatOpenAI(
             api_key=settings.openai_api_key,
-            model="gpt-4o",
+            model="gpt-4o" if high_intel else "gpt-4o-mini",
             temperature=0.0,
             streaming=True,
         )
@@ -364,7 +396,7 @@ async def node_llm_call(state: GraphState, config: RunnableConfig) -> dict:
         from langchain_groq import ChatGroq
         llm = ChatGroq(
             api_key=settings.groq_api_key,
-            model=settings.groq_model or "llama-3.3-70b-versatile",
+            model=(settings.groq_model or "llama-3.3-70b-versatile") if high_intel else "llama-3.1-8b-instant",
             temperature=0.0,
             streaming=True,
         )
@@ -685,6 +717,8 @@ async def run_langgraph_pipeline(
     rag_chunks: list[dict] | None = None,
     conversation_id: str | None = None,
     stream_callback: Callable[[StreamEvent], None] | None = None,
+    high_intel: bool = True,
+    query_datasources: bool = True,
 ) -> PipelineResult:
     """Main entrypoint. Runs the full LangGraph StateGraph pipeline."""
     if not conversation_history:
@@ -705,6 +739,10 @@ async def run_langgraph_pipeline(
             tool_calls_made=0,
         )
 
+    if memory is False:
+        last_user_msg_obj = next((m for m in reversed(conversation_history) if m.role == "user"), None)
+        conversation_history = [last_user_msg_obj] if last_user_msg_obj else []
+
     formatted = _db_messages_to_langchain(conversation_history[-HISTORY_WINDOW:])
 
     state = GraphState(
@@ -721,6 +759,12 @@ async def run_langgraph_pipeline(
         max_loops=6,
         tool_calls_made=0,
         final_answer=None,
+        high_intel=high_intel,
+        query_datasources=query_datasources,
+        tone=tone,
+        currency=currency,
+        memory=memory,
+        attachments=attachments,
     )
 
     config = {}
@@ -753,12 +797,22 @@ async def run_langgraph_pipeline_stream(
     db: AsyncSession,
     rag_chunks: list[dict] | None = None,
     conversation_id: str | None = None,
+    high_intel: bool = True,
+    query_datasources: bool = True,
+    tone: str | None = None,
+    currency: str | None = None,
+    memory: bool | None = None,
+    attachments: list[str] | None = None,
 ) -> AsyncGenerator[StreamEvent, None]:
     """Streaming entrypoint. Yields events in real time using an internal async queue."""
     queue = asyncio.Queue()
 
     async def stream_callback(event: StreamEvent) -> None:
         await queue.put(event)
+
+    if memory is False:
+        last_msg = next((m for m in reversed(conversation_history) if m.role == "user"), None)
+        conversation_history = [last_msg] if last_msg else []
 
     formatted = _db_messages_to_langchain(conversation_history[-HISTORY_WINDOW:])
 
@@ -776,6 +830,12 @@ async def run_langgraph_pipeline_stream(
         max_loops=6,
         tool_calls_made=0,
         final_answer=None,
+        high_intel=high_intel,
+        query_datasources=query_datasources,
+        tone=tone,
+        currency=currency,
+        memory=memory,
+        attachments=attachments,
     )
 
     # Launch StateGraph in an independent background task

@@ -193,6 +193,8 @@ async def send_message(
         db=db,
         rag_chunks=rag_chunks,
         conversation_id=str(conversation.id),
+        high_intel=body.high_intel if body.high_intel is not None else True,
+        query_datasources=body.query_datasources if body.query_datasources is not None else True,
     )
 
     # Save final AI response
@@ -203,8 +205,12 @@ async def send_message(
     )
     db.add(assistant_msg)
 
-    # Deduct one AI credit per turn
-    org.ai_credits -= 1
+    # Deduct one AI credit per turn atomically
+    from sqlalchemy import text
+    await db.execute(
+        text("UPDATE organizations SET ai_credits = ai_credits - 1 WHERE id = :org_id"),
+        {"org_id": org.id}
+    )
 
     await db.commit()
 
@@ -219,12 +225,9 @@ async def send_message(
 # GET /chat/stream — Server-Sent Events
 # ──────────────────────────────────────────────────────────────────
 
-@router.get("/stream")
+@router.post("/stream")
 async def stream_message(
-    request: Request,
-    content: str,
-    agent_id: str | None = None,
-    conversation_id: str | None = None,
+    body: ChatRequest,
     org: Organization = Depends(get_current_org),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -243,21 +246,21 @@ async def stream_message(
             yield "data: " + json.dumps({"type": "error", "content": "AI credits exhausted."}) + "\n\n"
         return StreamingResponse(credits_err(), media_type="text/event-stream")
 
-    agent = await _get_or_create_default_agent(db, org.id, user.id, agent_id)
+    agent = await _get_or_create_default_agent(db, org.id, user.id, body.agent_id)
 
     conversation = await _get_or_create_conversation(
         db=db,
         org_id=org.id,
         agent_id=agent.id,
         user_id=user.id,
-        conversation_id=conversation_id,
+        conversation_id=body.conversation_id,
     )
 
     # Save user message
     user_msg = Message(
         conversation_id=conversation.id,
         role="user",
-        content=content,
+        content=body.content,
     )
     db.add(user_msg)
     await db.flush()
@@ -269,7 +272,7 @@ async def stream_message(
         .order_by(Message.created_at)
     )
     history = list(history_result.scalars().all())
-    rag_chunks = await _get_rag_chunks(org, content)
+    rag_chunks = await _get_rag_chunks(org, body.content)
 
     async def event_generator():
         final_answer = ""
@@ -282,10 +285,16 @@ async def stream_message(
                 db=db,
                 rag_chunks=rag_chunks,
                 conversation_id=str(conversation.id),
+                high_intel=body.high_intel if body.high_intel is not None else True,
+                query_datasources=body.query_datasources if body.query_datasources is not None else True,
+                tone=body.tone,
+                currency=body.currency,
+                memory=body.memory,
+                attachments=body.attachments,
             ):
-                if await request.is_disconnected():
-                    logger.warning("SSE client disconnected for conversation %s", conversation.id)
-                    break
+                # We can't check request.is_disconnected() easily inside the generator 
+                # without passing the request object, but yielding to a disconnected client
+                # will raise a ClientDisconnect exception.
 
                 payload = {
                     "type": event.type,
@@ -309,7 +318,12 @@ async def stream_message(
                     content=final_answer,
                 )
                 db.add(assistant_msg)
-                org.ai_credits -= 1
+                
+                from sqlalchemy import text
+                await db.execute(
+                    text("UPDATE organizations SET ai_credits = ai_credits - 1 WHERE id = :org_id"),
+                    {"org_id": org.id}
+                )
                 await db.commit()
 
         except Exception as exc:
