@@ -260,25 +260,25 @@ async def invite_member(
       @media screen and (max-width: 600px) {{
         .wrapper {{
           padding: 20px 12px;
-        }
+        }}
         
         .content-padding {{
           padding: 24px 20px 24px 20px;
-        }
+        }}
         
         .footer {{
           padding: 20px;
-        }
+        }}
         
         .footer-col-left, .footer-col-right {{
           float: none;
           width: 100%;
           text-align: left;
-        }
+        }}
         
         .footer-col-right {{
           margin-top: 16px;
-        }
+        }}
       }}
     </style>
   </head>
