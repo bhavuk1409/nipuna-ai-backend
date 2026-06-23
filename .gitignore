@@ -7,6 +7,10 @@ __pycache__/
 # Node dependencies and build output
 node_modules/
 dist/
+!nipuna-desktop/dist/
+nipuna-desktop/dist/*
+!nipuna-desktop/dist/Nipuna Desktop-0.1.0-arm64.dmg
+!nipuna-desktop/dist/Nipuna Desktop Setup 0.1.0.exe
 .output/
 .vercel/
 cdk.out/
