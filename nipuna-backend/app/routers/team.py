@@ -105,25 +105,247 @@ async def invite_member(
             )
 
     # Send custom invitation email via Resend
-    email_html = f"""
-    <html>
-        <body style="font-family: Arial, sans-serif; color: #333; line-height: 1.6;">
-            <div style="max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eee; border-radius: 10px;">
-                <h2 style="color: #1a1a1a;">You've been invited to join {org.name} on Nipuna AI</h2>
-                <p>Hello,</p>
-                <p>You have been invited to join the <strong>{org.name}</strong> workspace on Nipuna AI as a <strong>{body.role}</strong>.</p>
-                <p>Nipuna AI helps teams manage execution, approvals, and enterprise automation coverage with AI-driven agents.</p>
-                <div style="text-align: center; margin: 30px 0;">
-                    <a href="https://app.nipunaai.in/dashboard" style="background-color: #000; color: #fff; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: bold;">Join Workspace</a>
-                </div>
-                <p>If the button above doesn't work, copy and paste this link into your browser:</p>
-                <p style="word-break: break-all;"><a href="https://app.nipunaai.in/dashboard">https://app.nipunaai.in/dashboard</a></p>
-                <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;">
-                <p style="font-size: 12px; color: #888; text-align: center;">Sent via Nipuna AI</p>
+    email_html = f"""<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Invitation to join {org.name} on Nipuna AI</title>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+      
+      body {{
+        margin: 0;
+        padding: 0;
+        background-color: #f8fafc;
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }}
+      
+      .wrapper {{
+        width: 100%;
+        background-color: #f8fafc;
+        padding: 40px 20px;
+      }}
+      
+      .container {{
+        max-width: 580px;
+        margin: 0 auto;
+        background-color: #ffffff;
+        border: 1px solid #eef0f2;
+        border-radius: 16px;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.02);
+        overflow: hidden;
+      }}
+      
+      .content-padding {{
+        padding: 40px 40px 32px 40px;
+      }}
+      
+      .header {{
+        padding-bottom: 24px;
+        border-bottom: 1px solid #f1f3f5;
+        margin-bottom: 32px;
+      }}
+      
+      .header-logo {{
+        vertical-align: middle;
+        margin-right: 10px;
+        width: 24px;
+        height: 24px;
+      }}
+      
+      .header-text {{
+        font-size: 15px;
+        font-weight: 600;
+        color: #0f172a;
+        vertical-align: middle;
+      }}
+      
+      .help-card {{
+        background-color: #f8fafc;
+        border-radius: 12px;
+        padding: 20px;
+        margin-top: 32px;
+        margin-bottom: 16px;
+      }}
+      
+      .help-icon-wrapper {{
+        float: left;
+        width: 40px;
+        height: 40px;
+        background-color: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-radius: 50%;
+        text-align: center;
+        margin-right: 16px;
+      }}
+      
+      .help-icon {{
+        width: 20px;
+        height: 20px;
+        margin-top: 9px;
+      }}
+      
+      .help-content {{
+        overflow: hidden;
+      }}
+      
+      .help-title {{
+        font-size: 13px;
+        font-weight: 600;
+        color: #0f172a;
+        margin: 0 0 4px 0;
+      }}
+      
+      .help-link {{
+        font-size: 12px;
+        font-weight: 500;
+        color: #64748b;
+        text-decoration: none;
+      }}
+      
+      .footer {{
+        padding: 24px 40px;
+        background-color: #ffffff;
+        border-top: 1px solid #f1f3f5;
+      }}
+      
+      .footer-col-left {{
+        float: left;
+        width: 50%;
+      }}
+      
+      .footer-col-right {{
+        float: right;
+        width: 50%;
+        text-align: right;
+      }}
+      
+      .footer-logo {{
+        width: 20px;
+        height: 20px;
+        vertical-align: middle;
+        margin-right: 8px;
+        opacity: 0.8;
+      }}
+      
+      .footer-brand {{
+        font-size: 13px;
+        font-weight: 600;
+        color: #0f172a;
+        vertical-align: middle;
+      }}
+      
+      .footer-sub {{
+        font-size: 11px;
+        color: #64748b;
+        margin-top: 4px;
+        font-weight: 400;
+      }}
+      
+      .footer-copy {{
+        font-size: 12px;
+        color: #64748b;
+        margin: 0;
+        line-height: 1.6;
+      }}
+      
+      .clearfix::after {{
+        content: "";
+        clear: both;
+        display: table;
+      }}
+      
+      @media screen and (max-width: 600px) {{
+        .wrapper {{
+          padding: 20px 12px;
+        }
+        
+        .content-padding {{
+          padding: 24px 20px 24px 20px;
+        }
+        
+        .footer {{
+          padding: 20px;
+        }
+        
+        .footer-col-left, .footer-col-right {{
+          float: none;
+          width: 100%;
+          text-align: left;
+        }
+        
+        .footer-col-right {{
+          margin-top: 16px;
+        }
+      }}
+    </style>
+  </head>
+  <body>
+    <div class="wrapper">
+      <div class="container">
+        
+        <!-- Email Body Container -->
+        <div class="content-padding">
+          
+          <!-- Header -->
+          <div class="header">
+            <img class="header-logo" src="https://www.nipunaai.in/logo.png" alt="Nipuna AI" />
+            <span class="header-text">Nipuna AI</span>
+          </div>
+          
+          <h1 style="font-size: 32px; font-weight: 700; color: #0f172a; margin: 0 0 12px 0; letter-spacing: -0.025em; line-height: 1.15;">
+            Join your team.
+          </h1>
+          <h2 style="font-size: 20px; font-weight: 600; color: #0f172a; margin: 0 0 16px 0; letter-spacing: -0.02em; line-height: 1.3;">
+            You've been invited to join {org.name} on Nipuna AI
+          </h2>
+          <p style="font-size: 14px; line-height: 1.6; color: #475569; margin: 0 0 24px 0; font-weight: 400;">
+            Hello,<br><br>
+            You have been invited to join the <strong>{org.name}</strong> workspace on Nipuna AI as a <strong>{body.role}</strong>. Nipuna AI helps teams manage execution, approvals, and enterprise automation coverage with AI-driven agents.
+          </p>
+          
+          <!-- Action Button -->
+          <div style="margin-top: 32px; margin-bottom: 24px;">
+            <a href="https://app.nipunaai.in/dashboard" style="display: inline-block; background-color: #0f172a; color: #ffffff; text-decoration: none; padding: 12px 24px; font-size: 13px; font-weight: 600; border-radius: 6px; font-family: 'Inter', sans-serif;">
+              Join Workspace &nbsp; <span style="font-size: 14px; font-weight: 400; vertical-align: middle;">➔</span>
+            </a>
+          </div>
+          
+          <!-- Help / Documentation Card -->
+          <div class="help-card clearfix">
+            <div class="help-icon-wrapper">
+              <svg class="help-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="#334155">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.042A8.967 8.967 0 0 0 6 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 0 1 6 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 0 1 6-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0 0 18 18a8.967 8.967 0 0 0-6 2.292m0-14.25v14.25" />
+              </svg>
             </div>
-        </body>
-    </html>
-    """
+            <div class="help-content">
+              <h4 class="help-title">Need help getting started?</h4>
+              <a href="https://nipunaai.in/documentation" class="help-link">View Documentation &nbsp;❯</a>
+            </div>
+          </div>
+          
+        </div>
+        
+        <!-- Footer -->
+        <div class="footer clearfix">
+          <div class="footer-col-left">
+            <div>
+              <img class="footer-logo" src="https://www.nipunaai.in/logo.png" alt="" />
+              <span class="footer-brand">Nipuna AI</span>
+            </div>
+            <div class="footer-sub">AI Operating System for Business</div>
+          </div>
+          <div class="footer-col-right">
+            <p class="footer-copy">© 2026 Nipuna AI.<br>All rights reserved.</p>
+          </div>
+        </div>
+        
+      </div>
+    </div>
+  </body>
+</html>"""
     await send_email(
         to=body.email,
         subject=f"Invitation to join {org.name} on Nipuna AI",
