@@ -1,0 +1,57 @@
+name: Deploy Backend to EC2
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Deploy to EC2 via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USERNAME }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            echo "Deploying latest changes..."
+            cd /home/ec2-user/nipuna-ai-backend
+            
+            # Fetch and reset to origin/main
+            git fetch origin
+            git reset --hard origin/main
+            
+            cd nipuna-backend
+            
+            # Activate virtual environment
+            if [ -d "venv" ]; then
+              source venv/bin/activate
+            elif [ -d ".venv" ]; then
+              source .venv/bin/activate
+            else
+              echo "Error: Virtual environment not found!"
+              exit 1
+            fi
+            
+            # Install dependencies
+            pip install --upgrade pip
+            pip install -r requirements.txt
+            
+            # Run database migrations
+            alembic upgrade head
+            
+            # Restart backend API service
+            sudo systemctl restart nipuna
+            
+            # (Optional) Restart worker service if exists
+            if systemctl is-active --quiet nipuna-worker; then
+              sudo systemctl restart nipuna-worker
+            fi
+            
+            echo "Deployment completed successfully!"
