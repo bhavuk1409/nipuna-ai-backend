@@ -155,20 +155,202 @@ async def request_email_code(
         await send_email(
             to=user.email,
             subject="Verify your identity — Nipuna AI",
-            html=f"""
-            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e5e7eb; rounded-lg;">
-                <h2 style="color: #111827; font-size: 20px; font-weight: bold; margin-bottom: 16px;">Verify your identity</h2>
-                <p style="color: #4b5563; font-size: 14px; line-height: 1.5; margin-bottom: 24px;">
-                    We received a request to change your email address on Nipuna AI. Enter the following 6-digit verification code to confirm your identity:
-                </p>
-                <div style="background-color: #f3f4f6; padding: 16px; border-radius: 8px; text-align: center; margin-bottom: 24px;">
-                    <span style="font-family: monospace; font-size: 28px; font-weight: bold; letter-spacing: 4px; color: #111827;">{code}</span>
-                </div>
-                <p style="color: #9ca3af; font-size: 12px;">
-                    This code is valid for 10 minutes. If you did not request this change, please ignore this email or contact support.
-                </p>
+            html=f"""<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Verify your identity — Nipuna AI</title>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+      
+      body {{
+        margin: 0;
+        padding: 0;
+        background-color: #f8fafc;
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }}
+      
+      .wrapper {{
+        width: 100%;
+        background-color: #f8fafc;
+        padding: 40px 20px;
+      }}
+      
+      .container {{
+        max-width: 580px;
+        margin: 0 auto;
+        background-color: #ffffff;
+        border: 1px solid #eef0f2;
+        border-radius: 16px;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.02);
+        overflow: hidden;
+      }}
+      
+      .content-padding {{
+        padding: 40px 40px 32px 40px;
+      }}
+      
+      .header {{
+        padding-bottom: 24px;
+        border-bottom: 1px solid #f1f3f5;
+        margin-bottom: 32px;
+      }}
+      
+      .header-logo {{
+        vertical-align: middle;
+        margin-right: 10px;
+        width: 24px;
+        height: 24px;
+      }}
+      
+      .header-text {{
+        font-size: 15px;
+        font-weight: 600;
+        color: #0f172a;
+        vertical-align: middle;
+      }}
+      
+      .code-display {{
+        background-color: #f8fafc;
+        border: 1px solid #eef0f2;
+        border-radius: 12px;
+        padding: 24px;
+        text-align: center;
+        margin-top: 32px;
+        margin-bottom: 24px;
+      }}
+      
+      .code-text {{
+        font-family: 'SF Mono', SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
+        font-size: 36px;
+        font-weight: 700;
+        letter-spacing: 6px;
+        color: #0f172a;
+      }}
+      
+      .footer {{
+        padding: 24px 40px;
+        background-color: #ffffff;
+        border-top: 1px solid #f1f3f5;
+      }}
+      
+      .footer-col-left {{
+        float: left;
+        width: 50%;
+      }}
+      
+      .footer-col-right {{
+        float: right;
+        width: 50%;
+        text-align: right;
+      }}
+      
+      .footer-logo {{
+        width: 20px;
+        height: 20px;
+        vertical-align: middle;
+        margin-right: 8px;
+        opacity: 0.8;
+      }}
+      
+      .footer-brand {{
+        font-size: 13px;
+        font-weight: 600;
+        color: #0f172a;
+        vertical-align: middle;
+      }}
+      
+      .footer-sub {{
+        font-size: 11px;
+        color: #64748b;
+        margin-top: 4px;
+        font-weight: 400;
+      }}
+      
+      .footer-copy {{
+        font-size: 12px;
+        color: #64748b;
+        margin: 0;
+        line-height: 1.6;
+      }}
+      
+      .clearfix::after {{
+        content: "";
+        clear: both;
+        display: table;
+      }}
+      
+      @media screen and (max-width: 600px) {{
+        .wrapper {{
+          padding: 20px 12px;
+        }}
+        
+        .content-padding {{
+          padding: 24px 20px 24px 20px;
+        }}
+        
+        .footer {{
+          padding: 20px;
+        }}
+        
+        .footer-col-left, .footer-col-right {{
+          float: none;
+          width: 100%;
+          text-align: left;
+        }}
+        
+        .footer-col-right {{
+          margin-top: 16px;
+        }}
+      }}
+    </style>
+  </head>
+  <body>
+    <div class="wrapper">
+      <div class="container">
+        
+        <div class="content-padding">
+          <div class="header">
+            <img class="header-logo" src="https://www.nipunaai.in/logo.png" alt="Nipuna AI" />
+            <span class="header-text">Nipuna AI</span>
+          </div>
+          
+          <h1 style="font-size: 32px; font-weight: 700; color: #0f172a; margin: 0 0 12px 0; letter-spacing: -0.025em; line-height: 1.15;">
+            Verification Code
+          </h1>
+          <p style="font-size: 14px; line-height: 1.6; color: #475569; margin: 0 0 24px 0; font-weight: 400;">
+            We received a request to change your email address on Nipuna AI. Enter the following 6-digit verification code to confirm your identity:
+          </p>
+          
+          <div class="code-display">
+            <span class="code-text">{code}</span>
+          </div>
+          
+          <p style="font-size: 12px; line-height: 1.5; color: #94a3b8; margin: 24px 0 0 0; font-weight: 400;">
+            This code is valid for 10 minutes. If you did not request this change, please ignore this email or contact support.
+          </p>
+        </div>
+        
+        <div class="footer clearfix">
+          <div class="footer-col-left">
+            <div>
+              <img class="footer-logo" src="https://www.nipunaai.in/logo.png" alt="" />
+              <span class="footer-brand">Nipuna AI</span>
             </div>
-            """
+            <div class="footer-sub">AI Operating System for Business</div>
+          </div>
+          <div class="footer-col-right">
+            <p class="footer-copy">© 2026 Nipuna AI.<br>All rights reserved.</p>
+          </div>
+        </div>
+        
+      </div>
+    </div>
+  </body>
+</html>
+"""
         )
     except Exception as e:
         logger.error("Failed to send verification email: %s", e)

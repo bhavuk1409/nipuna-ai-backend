@@ -81,11 +81,214 @@ def _check_credit_low(session: Session, org: Organization, r) -> int:
         select(User).where(User.org_id == org.id, User.role == "admin")
     ).scalar_one_or_none()
     if admin:
-        import asyncio
-        from app.services.notifications.email import send_email
+        email_html = f"""<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Low AI Credits — Nipuna AI</title>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+      
+      body {{
+        margin: 0;
+        padding: 0;
+        background-color: #f8fafc;
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }}
+      
+      .wrapper {{
+        width: 100%;
+        background-color: #f8fafc;
+        padding: 40px 20px;
+      }}
+      
+      .container {{
+        max-width: 580px;
+        margin: 0 auto;
+        background-color: #ffffff;
+        border: 1px solid #eef0f2;
+        border-radius: 16px;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.02);
+        overflow: hidden;
+      }}
+      
+      .content-padding {{
+        padding: 40px 40px 32px 40px;
+      }}
+      
+      .header {{
+        padding-bottom: 24px;
+        border-bottom: 1px solid #f1f3f5;
+        margin-bottom: 32px;
+      }}
+      
+      .header-logo {{
+        vertical-align: middle;
+        margin-right: 10px;
+        width: 24px;
+        height: 24px;
+      }}
+      
+      .header-text {{
+        font-size: 15px;
+        font-weight: 600;
+        color: #0f172a;
+        vertical-align: middle;
+      }}
+      
+      .alert-card {{
+        background-color: #fffbeb;
+        border: 1px solid #fef3c7;
+        border-radius: 12px;
+        padding: 20px;
+        margin-top: 24px;
+        margin-bottom: 24px;
+      }}
+      
+      .alert-title {{
+        font-size: 16px;
+        font-weight: 600;
+        color: #b45309;
+        margin: 0 0 8px 0;
+      }}
+      
+      .alert-desc {{
+        font-size: 14px;
+        line-height: 1.6;
+        color: #d97706;
+        margin: 0;
+      }}
+      
+      .footer {{
+        padding: 24px 40px;
+        background-color: #ffffff;
+        border-top: 1px solid #f1f3f5;
+      }}
+      
+      .footer-col-left {{
+        float: left;
+        width: 50%;
+      }}
+      
+      .footer-col-right {{
+        float: right;
+        width: 50%;
+        text-align: right;
+      }}
+      
+      .footer-logo {{
+        width: 20px;
+        height: 20px;
+        vertical-align: middle;
+        margin-right: 8px;
+        opacity: 0.8;
+      }}
+      
+      .footer-brand {{
+        font-size: 13px;
+        font-weight: 600;
+        color: #0f172a;
+        vertical-align: middle;
+      }}
+      
+      .footer-sub {{
+        font-size: 11px;
+        color: #64748b;
+        margin-top: 4px;
+        font-weight: 400;
+      }}
+      
+      .footer-copy {{
+        font-size: 12px;
+        color: #64748b;
+        margin: 0;
+        line-height: 1.6;
+      }}
+      
+      .clearfix::after {{
+        content: "";
+        clear: both;
+        display: table;
+      }}
+      
+      @media screen and (max-width: 600px) {{
+        .wrapper {{
+          padding: 20px 12px;
+        }}
+        
+        .content-padding {{
+          padding: 24px 20px 24px 20px;
+        }}
+        
+        .footer {{
+          padding: 20px;
+        }}
+        
+        .footer-col-left, .footer-col-right {{
+          float: none;
+          width: 100%;
+          text-align: left;
+        }}
+        
+        .footer-col-right {{
+          margin-top: 16px;
+        }}
+      }}
+    </style>
+  </head>
+  <body>
+    <div class="wrapper">
+      <div class="container">
+        
+        <div class="content-padding">
+          <div class="header">
+            <img class="header-logo" src="https://www.nipunaai.in/logo.png" alt="Nipuna AI" />
+            <span class="header-text">Nipuna AI</span>
+          </div>
+          
+          <h1 style="font-size: 32px; font-weight: 700; color: #0f172a; margin: 0 0 12px 0; letter-spacing: -0.025em; line-height: 1.15;">
+            Attention Required
+          </h1>
+          <p style="font-size: 14px; line-height: 1.6; color: #475569; margin: 0 0 24px 0; font-weight: 400;">
+            Hello,<br><br>
+            We are writing to inform you that your workspace AI credits are running low. Please top up your credits to avoid any interruption in agent operations.
+          </p>
+          
+          <div class="alert-card">
+            <h3 class="alert-title">Low AI Credits Warning</h3>
+            <p class="alert-desc">Remaining Credits: <strong>{org.ai_credits}</strong></p>
+          </div>
+          
+          <!-- Action Button -->
+          <div style="margin-top: 32px; margin-bottom: 24px; text-align: center;">
+            <a href="https://app.nipunaai.in/settings/billing" style="display: inline-block; background-color: #0f172a; color: #ffffff; text-decoration: none; padding: 12px 24px; font-size: 13px; font-weight: 600; border-radius: 6px; font-family: 'Inter', sans-serif;">
+              Manage Billing &nbsp; <span style="font-size: 14px; font-weight: 400; vertical-align: middle;">➔</span>
+            </a>
+          </div>
+        </div>
+        
+        <div class="footer clearfix">
+          <div class="footer-col-left">
+            <div>
+              <img class="footer-logo" src="https://www.nipunaai.in/logo.png" alt="" />
+              <span class="footer-brand">Nipuna AI</span>
+            </div>
+            <div class="footer-sub">AI Operating System for Business</div>
+          </div>
+          <div class="footer-col-right">
+            <p class="footer-copy">© 2026 Nipuna AI.<br>All rights reserved.</p>
+          </div>
+        </div>
+        
+      </div>
+    </div>
+  </body>
+</html>
+"""
         asyncio.create_task(
-            send_email(admin.email, "Low AI Credits",
-                       f"<p>Your AI credits are running low ({org.ai_credits} remaining).</p>")
+            send_email(admin.email, "Low AI Credits — Nipuna AI", email_html)
         )
     return 1
 
@@ -205,9 +408,215 @@ def _check_subscription_expiry(session: Session, org: Organization, r) -> int:
         import asyncio
         from app.services.notifications.email import send_email
         from app.services.notifications.whatsapp import send_whatsapp
+        
+        email_html = f"""<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Subscription Expiring — Nipuna AI</title>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+      
+      body {{
+        margin: 0;
+        padding: 0;
+        background-color: #f8fafc;
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }}
+      
+      .wrapper {{
+        width: 100%;
+        background-color: #f8fafc;
+        padding: 40px 20px;
+      }}
+      
+      .container {{
+        max-width: 580px;
+        margin: 0 auto;
+        background-color: #ffffff;
+        border: 1px solid #eef0f2;
+        border-radius: 16px;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.02);
+        overflow: hidden;
+      }}
+      
+      .content-padding {{
+        padding: 40px 40px 32px 40px;
+      }}
+      
+      .header {{
+        padding-bottom: 24px;
+        border-bottom: 1px solid #f1f3f5;
+        margin-bottom: 32px;
+      }}
+      
+      .header-logo {{
+        vertical-align: middle;
+        margin-right: 10px;
+        width: 24px;
+        height: 24px;
+      }}
+      
+      .header-text {{
+        font-size: 15px;
+        font-weight: 600;
+        color: #0f172a;
+        vertical-align: middle;
+      }}
+      
+      .alert-card {{
+        background-color: #fef2f2;
+        border: 1px solid #fee2e2;
+        border-radius: 12px;
+        padding: 20px;
+        margin-top: 24px;
+        margin-bottom: 24px;
+      }}
+      
+      .alert-title {{
+        font-size: 16px;
+        font-weight: 600;
+        color: #991b1b;
+        margin: 0 0 8px 0;
+      }}
+      
+      .alert-desc {{
+        font-size: 14px;
+        line-height: 1.6;
+        color: #b91c1c;
+        margin: 0;
+      }}
+      
+      .footer {{
+        padding: 24px 40px;
+        background-color: #ffffff;
+        border-top: 1px solid #f1f3f5;
+      }}
+      
+      .footer-col-left {{
+        float: left;
+        width: 50%;
+      }}
+      
+      .footer-col-right {{
+        float: right;
+        width: 50%;
+        text-align: right;
+      }}
+      
+      .footer-logo {{
+        width: 20px;
+        height: 20px;
+        vertical-align: middle;
+        margin-right: 8px;
+        opacity: 0.8;
+      }}
+      
+      .footer-brand {{
+        font-size: 13px;
+        font-weight: 600;
+        color: #0f172a;
+        vertical-align: middle;
+      }}
+      
+      .footer-sub {{
+        font-size: 11px;
+        color: #64748b;
+        margin-top: 4px;
+        font-weight: 400;
+      }}
+      
+      .footer-copy {{
+        font-size: 12px;
+        color: #64748b;
+        margin: 0;
+        line-height: 1.6;
+      }}
+      
+      .clearfix::after {{
+        content: "";
+        clear: both;
+        display: table;
+      }}
+      
+      @media screen and (max-width: 600px) {{
+        .wrapper {{
+          padding: 20px 12px;
+        }}
+        
+        .content-padding {{
+          padding: 24px 20px 24px 20px;
+        }}
+        
+        .footer {{
+          padding: 20px;
+        }}
+        
+        .footer-col-left, .footer-col-right {{
+          float: none;
+          width: 100%;
+          text-align: left;
+        }}
+        
+        .footer-col-right {{
+          margin-top: 16px;
+        }}
+      }}
+    </style>
+  </head>
+  <body>
+    <div class="wrapper">
+      <div class="container">
+        
+        <div class="content-padding">
+          <div class="header">
+            <img class="header-logo" src="https://www.nipunaai.in/logo.png" alt="Nipuna AI" />
+            <span class="header-text">Nipuna AI</span>
+          </div>
+          
+          <h1 style="font-size: 32px; font-weight: 700; color: #0f172a; margin: 0 0 12px 0; letter-spacing: -0.025em; line-height: 1.15;">
+            Action Required
+          </h1>
+          <p style="font-size: 14px; line-height: 1.6; color: #475569; margin: 0 0 24px 0; font-weight: 400;">
+            Hello,<br><br>
+            Your workspace subscription is expiring soon. Please renew your subscription to maintain active access to all AI agents and automation flows.
+          </p>
+          
+          <div class="alert-card">
+            <h3 class="alert-title">Subscription Expiring</h3>
+            <p class="alert-desc">Expiry Date: <strong>{expires.date()}</strong></p>
+          </div>
+          
+          <!-- Action Button -->
+          <div style="margin-top: 32px; margin-bottom: 24px; text-align: center;">
+            <a href="https://app.nipunaai.in/settings/billing" style="display: inline-block; background-color: #0f172a; color: #ffffff; text-decoration: none; padding: 12px 24px; font-size: 13px; font-weight: 600; border-radius: 6px; font-family: 'Inter', sans-serif;">
+              Renew Subscription &nbsp; <span style="font-size: 14px; font-weight: 400; vertical-align: middle;">➔</span>
+            </a>
+          </div>
+        </div>
+        
+        <div class="footer clearfix">
+          <div class="footer-col-left">
+            <div>
+              <img class="footer-logo" src="https://www.nipunaai.in/logo.png" alt="" />
+              <span class="footer-brand">Nipuna AI</span>
+            </div>
+            <div class="footer-sub">AI Operating System for Business</div>
+          </div>
+          <div class="footer-col-right">
+            <p class="footer-copy">© 2026 Nipuna AI.<br>All rights reserved.</p>
+          </div>
+        </div>
+        
+      </div>
+    </div>
+  </body>
+</html>
+"""
         asyncio.create_task(
-            send_email(admin.email, "Subscription Expiring",
-                       f"<p>Your subscription expires on {expires.date()}.</p>")
+            send_email(admin.email, "Subscription Expiring — Nipuna AI", email_html)
         )
         if admin.phone:
             asyncio.create_task(
