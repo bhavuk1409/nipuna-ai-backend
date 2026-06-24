@@ -82,7 +82,32 @@ async def resolve_current_user(token: Optional[str], db: AsyncSession) -> User:
         # Check if there is a pending invitation for this user's email under a different organization
         from app.database import AsyncSessionLocal
         async with AsyncSessionLocal() as bootstrap_db:
-            # We only migrate them if they are actively trying to access the invited organization (i.e. the token claims org matches the invite org)
+            # If user has no active org_id, automatically associate them with their pending invitation
+            if not user.org_id:
+                pending_check = await bootstrap_db.execute(
+                    select(User).where(
+                        User.email == user.email,
+                        User.status == "pending",
+                        User.clerk_user_id.like("invited_%")
+                    ).order_by(User.created_at.desc())
+                )
+                pending_invite = pending_check.scalar_one_or_none()
+                if pending_invite:
+                    fresh_user_res = await bootstrap_db.execute(
+                        select(User).where(User.id == user.id)
+                    )
+                    fresh_user = fresh_user_res.scalar_one_or_none()
+                    if fresh_user:
+                        fresh_user.org_id = pending_invite.org_id
+                        fresh_user.role = pending_invite.role
+                        fresh_user.status = pending_invite.status
+                        
+                        await bootstrap_db.delete(pending_invite)
+                        await bootstrap_db.commit()
+                        
+                        await db.refresh(user)
+                        logger.info("Automatically migrated user %s to org_id=%s with status=pending because they had no active org", user.email, fresh_user.org_id)
+
             token_clerk_org_id = claims.get("org_id")
             if token_clerk_org_id:
                 from app.models.organization import Organization
