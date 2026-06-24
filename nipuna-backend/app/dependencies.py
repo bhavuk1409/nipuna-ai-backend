@@ -115,6 +115,28 @@ async def resolve_current_user(token: Optional[str], db: AsyncSession) -> User:
                     select(Organization).where(Organization.clerk_org_id == token_clerk_org_id)
                 )
                 clerk_org = org_res.scalar_one_or_none()
+                
+                # Dynamic self-healing for dev mismatch (real Clerk org ID vs local manual_ prefix)
+                if not clerk_org and token_clerk_org_id.startswith("org_"):
+                    pending_check_heal = await bootstrap_db.execute(
+                        select(User, Organization)
+                        .join(Organization, User.org_id == Organization.id)
+                        .where(
+                            User.email == user.email,
+                            User.status == "pending",
+                            User.clerk_user_id.like("invited_%"),
+                            Organization.clerk_org_id.like("manual_%")
+                        )
+                    )
+                    pending_invite_row = pending_check_heal.first()
+                    if pending_invite_row:
+                        pending_invite, db_org = pending_invite_row
+                        db_org.clerk_org_id = token_clerk_org_id
+                        bootstrap_db.add(db_org)
+                        await bootstrap_db.commit()
+                        logger.info("Self-healed organization clerk_org_id to %s for org %s", token_clerk_org_id, db_org.name)
+                        clerk_org = db_org
+
                 if clerk_org:
                     pending_check = await bootstrap_db.execute(
                         select(User).where(
