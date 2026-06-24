@@ -719,6 +719,10 @@ async def run_langgraph_pipeline(
     stream_callback: Callable[[StreamEvent], None] | None = None,
     high_intel: bool = True,
     query_datasources: bool = True,
+    tone: str | None = None,
+    currency: str | None = None,
+    memory: bool | None = None,
+    attachments: list[str] | None = None,
 ) -> PipelineResult:
     """Main entrypoint. Runs the full LangGraph StateGraph pipeline."""
     if not conversation_history:

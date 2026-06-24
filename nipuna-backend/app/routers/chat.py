@@ -195,6 +195,10 @@ async def send_message(
         conversation_id=str(conversation.id),
         high_intel=body.high_intel if body.high_intel is not None else True,
         query_datasources=body.query_datasources if body.query_datasources is not None else True,
+        tone=body.tone,
+        currency=body.currency,
+        memory=body.memory,
+        attachments=body.attachments,
     )
 
     # Save final AI response

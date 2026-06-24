@@ -324,3 +324,75 @@ async def test_connect_integration_success(mock_composio, client, db_session):
     finally:
         app.dependency_overrides.clear()
 
+
+@pytest.mark.asyncio
+@patch("app.services.ai.langgraph_pipeline.graph.ainvoke")
+async def test_run_langgraph_pipeline_new_arguments(mock_ainvoke, db_session):
+    from app.services.ai.langgraph_pipeline import run_langgraph_pipeline
+    mock_ainvoke.return_value = {"final_answer": "Mocked answer", "tool_calls_made": 1}
+
+    org_id = uuid.uuid4()
+    org = Organization(id=org_id, name="Test Org", clerk_org_id=f"org_{org_id}")
+    db_session.add(org)
+
+    user_id = uuid.uuid4()
+    user = User(
+        id=user_id,
+        clerk_user_id=f"user_{user_id}",
+        email="test@example.com",
+        first_name="Test",
+        last_name="User",
+        role="member",
+        status="active"
+    )
+    db_session.add(user)
+    await db_session.flush()
+
+    agent_id = uuid.uuid4()
+    agent = Agent(
+        id=agent_id,
+        org_id=org_id,
+        name="Mail Bot",
+        domain="General",
+        objective="Help send emails",
+        status="active",
+        created_by=user_id
+    )
+    db_session.add(agent)
+
+    conv_id = uuid.uuid4()
+    conv = Conversation(id=conv_id, org_id=org_id, agent_id=agent_id, user_id=user_id)
+    db_session.add(conv)
+
+    user_msg = Message(
+        conversation_id=conv_id,
+        role="user",
+        content="Please email test@example.com telling them hello"
+    )
+    db_session.add(user_msg)
+    await db_session.commit()
+
+    # Call run_langgraph_pipeline passing the new tone, currency, memory, and attachments
+    result = await run_langgraph_pipeline(
+        org=org,
+        agent=agent,
+        conversation_history=[user_msg],
+        db=db_session,
+        conversation_id=str(conv_id),
+        tone="concise",
+        currency="USD",
+        memory=True,
+        attachments=["file.txt"]
+    )
+
+    assert result.answer == "Mocked answer"
+    assert result.tool_calls_made == 1
+    assert mock_ainvoke.call_count == 1
+    
+    # Verify that GraphState was initialized with the passed args
+    called_state = mock_ainvoke.call_args[0][0]
+    assert called_state["tone"] == "concise"
+    assert called_state["currency"] == "USD"
+    assert called_state["memory"] is True
+    assert called_state["attachments"] == ["file.txt"]
+
