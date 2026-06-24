@@ -14,6 +14,7 @@ class NotificationResponse(BaseModel):
     read: bool
     created_at: datetime
     rule_id: str
+    target_org_id: str | None = None
 
 
 class NotificationListResponse(BaseModel):

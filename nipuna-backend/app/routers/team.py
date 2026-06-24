@@ -461,11 +461,81 @@ async def invite_member(
     return {"status": "invitation_sent"}
 
 
+from pydantic import BaseModel
+from typing import Optional
+
+class RemoteInvitationAction(BaseModel):
+    org_id: Optional[str] = None
+
+
 @router.post("/accept", response_model=dict[str, str])
 async def accept_invitation(
+    body: Optional[RemoteInvitationAction] = None,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, str]:
+    target_org_id = body.org_id if body else None
+    
+    if target_org_id:
+        import uuid
+        try:
+            target_org_uuid = uuid.UUID(target_org_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid org_id format")
+            
+        # Find the pending invite for this user under the target organization
+        pending_check = await db.execute(
+            select(User).where(
+                User.email == user.email,
+                User.org_id == target_org_uuid,
+                User.status == "pending",
+                User.clerk_user_id.like("invited_%")
+            )
+        )
+        pending_invite = pending_check.scalar_one_or_none()
+        if not pending_invite:
+            raise HTTPException(status_code=404, detail="Invitation not found or already accepted")
+            
+        pending_invite.status = "active"
+        db.add(pending_invite)
+        await db.commit()
+        
+        # Sync with Clerk memberships
+        from app.models.organization import Organization
+        org_res = await db.execute(select(Organization).where(Organization.id == target_org_uuid))
+        org = org_res.scalar_one_or_none()
+        if org and org.clerk_org_id and not org.clerk_org_id.startswith("manual_") and user.clerk_user_id:
+            import httpx
+            import logging
+            logger = logging.getLogger(__name__)
+            settings = get_settings()
+            if settings.clerk_secret_key:
+                role_to_clerk = {
+                    "admin": "org:admin",
+                    "member": "org:member",
+                    "viewer": "org:member",
+                }
+                clerk_role = role_to_clerk.get(pending_invite.role, pending_invite.role)
+                logger.info(f"Adding user {user.clerk_user_id} to Clerk Org {org.clerk_org_id} with role {clerk_role} on accept")
+                try:
+                    async with httpx.AsyncClient() as client:
+                        resp = await client.post(
+                            f"https://api.clerk.com/v1/organizations/{org.clerk_org_id}/memberships",
+                            headers={"Authorization": f"Bearer {settings.clerk_secret_key}"},
+                            json={
+                                "user_id": user.clerk_user_id,
+                                "role": clerk_role,
+                            },
+                        )
+                        if resp.status_code in (200, 201):
+                            logger.info("Successfully added user to Clerk organization memberships on accept")
+                        else:
+                            logger.warning(f"Failed to add user to Clerk organization memberships on accept: {resp.status_code} - {resp.text}")
+                except Exception as e:
+                    logger.error(f"Error calling Clerk memberships API on accept: {e}")
+                    
+        return {"status": "success", "detail": "Invitation accepted"}
+
     if user.status != "pending":
         raise HTTPException(status_code=400, detail="User is not pending invitation review")
     user.status = "active"
@@ -511,9 +581,58 @@ async def accept_invitation(
 
 @router.post("/decline", response_model=dict[str, str])
 async def decline_invitation(
+    body: Optional[RemoteInvitationAction] = None,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, str]:
+    target_org_id = body.org_id if body else None
+    
+    if target_org_id:
+        import uuid
+        try:
+            target_org_uuid = uuid.UUID(target_org_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid org_id format")
+            
+        # Find the pending invite for this user under the target organization
+        pending_check = await db.execute(
+            select(User).where(
+                User.email == user.email,
+                User.org_id == target_org_uuid,
+                User.status == "pending",
+                User.clerk_user_id.like("invited_%")
+            )
+        )
+        pending_invite = pending_check.scalar_one_or_none()
+        if not pending_invite:
+            raise HTTPException(status_code=404, detail="Invitation not found")
+            
+        pending_invite.status = "declined"
+        db.add(pending_invite)
+        await db.commit()
+        
+        # Sync with Clerk (remove from Clerk)
+        from app.models.organization import Organization
+        org_res = await db.execute(select(Organization).where(Organization.id == target_org_uuid))
+        org = org_res.scalar_one_or_none()
+        if org and org.clerk_org_id and not org.clerk_org_id.startswith("manual_") and user.clerk_user_id:
+            import httpx
+            import logging
+            logger = logging.getLogger(__name__)
+            settings = get_settings()
+            if settings.clerk_secret_key:
+                logger.info(f"Removing user {user.clerk_user_id} from Clerk Org {org.clerk_org_id} on direct decline")
+                try:
+                    async with httpx.AsyncClient() as client:
+                        resp = await client.delete(
+                            f"https://api.clerk.com/v1/organizations/{org.clerk_org_id}/memberships/{user.clerk_user_id}",
+                            headers={"Authorization": f"Bearer {settings.clerk_secret_key}"},
+                        )
+                except Exception as e:
+                    logger.error(f"Error calling Clerk memberships delete API: {e}")
+                    
+        return {"status": "success", "detail": "Invitation declined"}
+
     if user.status != "pending":
         raise HTTPException(status_code=400, detail="User is not pending invitation review")
     

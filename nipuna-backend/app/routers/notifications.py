@@ -74,7 +74,7 @@ async def list_notifications(
     if has_read_at:
         result = await db.execute(
             select(Alert)
-            .where(Alert.org_id == org.id)
+            .where(Alert.org_id == org.id, Alert.rule_id != "TEAM_INVITATION")
             .order_by(Alert.created_at.desc())
             .limit(50)
         )
@@ -83,6 +83,7 @@ async def list_notifications(
             select(func.count(Alert.id)).where(
                 Alert.org_id == org.id,
                 Alert.read_at.is_(None),
+                Alert.rule_id != "TEAM_INVITATION",
             )
         )
         unread_count = int(unread_result.scalar() or 0)
@@ -93,7 +94,7 @@ async def list_notifications(
                 """
                 SELECT id, rule_id, severity, message, delivered_at, created_at
                 FROM alerts
-                WHERE org_id = :org_id
+                WHERE org_id = :org_id AND rule_id != 'TEAM_INVITATION'
                 ORDER BY created_at DESC
                 LIMIT 50
                 """
@@ -115,6 +116,36 @@ async def list_notifications(
         ]
         unread_count = len(notifications)
 
+    # Fetch pending invites dynamically for _user
+    invitation_notifications = []
+    if _user.email:
+        invites_query = await db.execute(
+            select(User, Organization)
+            .join(Organization, User.org_id == Organization.id)
+            .where(
+                User.email == _user.email,
+                User.status == "pending",
+                User.clerk_user_id.like("invited_%")
+            )
+        )
+        pending_invites = invites_query.all()
+        for p_user, p_org in pending_invites:
+            invitation_notifications.append(
+                NotificationResponse(
+                    id=p_user.id,
+                    title="Workspace Invitation",
+                    description=f"You have been invited to join the workspace {p_org.name} as a {p_user.role}.",
+                    severity="info",
+                    read=False,
+                    created_at=p_user.created_at,
+                    rule_id="TEAM_INVITATION",
+                    target_org_id=str(p_org.id),
+                )
+            )
+
+    notifications = invitation_notifications + notifications
+    unread_count += len(invitation_notifications)
+
     return NotificationListResponse(
         notifications=notifications,
         unread_count=unread_count,
@@ -128,6 +159,32 @@ async def mark_notification_read(
     _user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> NotificationResponse:
+    # Check if the notification_id is a dynamic team invitation
+    if _user.email:
+        invite_res = await db.execute(
+            select(User, Organization)
+            .join(Organization, User.org_id == Organization.id)
+            .where(
+                User.id == notification_id,
+                User.email == _user.email,
+                User.status == "pending",
+                User.clerk_user_id.like("invited_%")
+            )
+        )
+        invite_row = invite_res.first()
+        if invite_row:
+            p_user, p_org = invite_row
+            return NotificationResponse(
+                id=p_user.id,
+                title="Workspace Invitation",
+                description=f"You have been invited to join the workspace {p_org.name} as a {p_user.role}.",
+                severity="info",
+                read=True,
+                created_at=p_user.created_at,
+                rule_id="TEAM_INVITATION",
+                target_org_id=str(p_org.id),
+            )
+
     has_read_at = await _alerts_have_read_at_column(db)
 
     if has_read_at:
