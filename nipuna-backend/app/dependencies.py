@@ -94,18 +94,40 @@ async def resolve_current_user(token: Optional[str], db: AsyncSession) -> User:
                 email = claims.get("email") or ""
                 first_name = claims.get("first_name") or claims.get("given_name") or ""
                 last_name = claims.get("last_name") or claims.get("family_name") or ""
-                user = User(
-                    clerk_user_id=clerk_user_id,
-                    email=email,
-                    first_name=first_name,
-                    last_name=last_name,
-                    status="active",
-                    role="member",
-                )
-                bootstrap_db.add(user)
-                await bootstrap_db.commit()
-                await bootstrap_db.refresh(user)
-                logger.info("Auto-created user %s (%s) during token bootstrap", clerk_user_id, email)
+
+                if email:
+                    pending_check = await bootstrap_db.execute(
+                        select(User).where(
+                            User.email == email,
+                            User.status == "pending",
+                            User.clerk_user_id.like("invited_%")
+                        )
+                    )
+                    pending_user = pending_check.scalar_one_or_none()
+                    if pending_user:
+                        pending_user.clerk_user_id = clerk_user_id
+                        if first_name:
+                            pending_user.first_name = first_name
+                        if last_name:
+                            pending_user.last_name = last_name
+                        user = pending_user
+                        await bootstrap_db.commit()
+                        await bootstrap_db.refresh(user)
+                        logger.info("Linked clerk_user_id=%s to pending invitation for email=%s", clerk_user_id, email)
+
+                if user is None:
+                    user = User(
+                        clerk_user_id=clerk_user_id,
+                        email=email,
+                        first_name=first_name,
+                        last_name=last_name,
+                        status="active",
+                        role="member",
+                    )
+                    bootstrap_db.add(user)
+                    await bootstrap_db.commit()
+                    await bootstrap_db.refresh(user)
+                    logger.info("Auto-created user %s (%s) during token bootstrap", clerk_user_id, email)
         # Re-fetch in the caller's session so the object is bound correctly
         result2 = await db.execute(
             select(User).where(User.clerk_user_id == clerk_user_id)

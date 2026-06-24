@@ -18,9 +18,35 @@ from app.models.organization import Organization
 from app.models.settings import OrgPreferences, WorkspaceSettings
 from app.models.user import User
 from app.utils.audit import log_action
+from app.dependencies import get_current_user
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+
+@router.get("/me")
+async def get_current_user_profile(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+) -> dict:
+    org_name = None
+    if user.org_id:
+        org_result = await db.execute(select(Organization).where(Organization.id == user.org_id))
+        org = org_result.scalar_one_or_none()
+        if org:
+            org_name = org.name
+
+    return {
+        "id": str(user.id),
+        "email": user.email,
+        "first_name": user.first_name,
+        "last_name": user.last_name,
+        "role": user.role,
+        "status": user.status,
+        "org_id": str(user.org_id) if user.org_id else None,
+        "org_name": org_name,
+    }
+
 
 
 @router.post("/webhook", include_in_schema=False)
@@ -106,7 +132,7 @@ async def _handle_user_created(db: AsyncSession, data: dict) -> None:
         pending_user = pending_result.scalar_one_or_none()
         if pending_user:
             pending_user.clerk_user_id = clerk_user_id
-            pending_user.status = "active"
+            pending_user.status = "pending"
             pending_user.first_name = data.get("first_name") or ""
             pending_user.last_name = data.get("last_name") or ""
             pending_user.phone = phone

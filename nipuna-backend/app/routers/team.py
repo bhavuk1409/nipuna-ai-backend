@@ -333,10 +333,13 @@ async def invite_member(
             You have been invited to join the <strong>{org.name}</strong> workspace on Nipuna AI as a <strong>{body.role}</strong>. Nipuna AI helps teams manage execution, approvals, and enterprise automation coverage with AI-driven agents.
           </p>
           
-          <!-- Action Button -->
+          <!-- Action Buttons -->
           <div style="margin-top: 32px; margin-bottom: 24px;">
-            <a href="{settings.frontend_url}/sign-up?email={body.email}" style="display: inline-block; background-color: #0f172a; color: #ffffff; text-decoration: none; padding: 12px 24px; font-size: 13px; font-weight: 600; border-radius: 6px; font-family: 'Inter', sans-serif;">
+            <a href="{settings.frontend_url}/sign-up?email={body.email}" style="display: inline-block; background-color: #0f172a; color: #ffffff; text-decoration: none; padding: 12px 24px; font-size: 13px; font-weight: 600; border-radius: 6px; font-family: 'Inter', sans-serif; margin-right: 12px; margin-bottom: 8px;">
               Join Workspace &nbsp; <span style="font-size: 14px; font-weight: 400; vertical-align: middle;">➔</span>
+            </a>
+            <a href="{settings.frontend_url}/invite/decline?email={body.email}&org_id={org.id}" style="display: inline-block; background-color: #ffffff; color: #dc2626; border: 1px solid #fecaca; text-decoration: none; padding: 12px 24px; font-size: 13px; font-weight: 600; border-radius: 6px; font-family: 'Inter', sans-serif; margin-bottom: 8px;">
+              Reject Invitation
             </a>
           </div>
           
@@ -380,3 +383,119 @@ async def invite_member(
     )
 
     return {"status": "invitation_sent"}
+
+
+@router.post("/accept", response_model=dict[str, str])
+async def accept_invitation(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, str]:
+    if user.status != "pending":
+        raise HTTPException(status_code=400, detail="User is not pending invitation review")
+    user.status = "active"
+    db.add(user)
+    await db.commit()
+    return {"status": "success", "detail": "Invitation accepted"}
+
+
+@router.post("/decline", response_model=dict[str, str])
+async def decline_invitation(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, str]:
+    if user.status != "pending":
+        raise HTTPException(status_code=400, detail="User is not pending invitation review")
+    user.status = "suspended"
+    user.org_id = None
+    db.add(user)
+    await db.commit()
+    return {"status": "success", "detail": "Invitation declined"}
+
+
+@router.post("/public-decline", response_model=dict[str, str])
+async def public_decline_invitation(
+    email: str,
+    org_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, str]:
+    import uuid
+    try:
+        org_uuid = uuid.UUID(org_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid org_id format")
+
+    result = await db.execute(
+        select(User).where(
+            User.email == email,
+            User.org_id == org_uuid,
+            User.status == "pending",
+        )
+    )
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="Pending invitation not found")
+
+    await db.delete(user)
+    await db.commit()
+    return {"status": "success", "detail": "Invitation declined and deleted"}
+
+
+@router.delete("/members/{member_id}", response_model=dict[str, str])
+async def remove_member(
+    member_id: str,
+    org: Organization = Depends(get_current_org),
+    _admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, str]:
+    import uuid
+    try:
+        member_uuid = uuid.UUID(member_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid member_id format")
+
+    result = await db.execute(
+        select(User).where(
+            User.id == member_uuid,
+            User.org_id == org.id,
+            User.status == "active",
+        )
+    )
+    member = result.scalar_one_or_none()
+    if not member:
+        raise HTTPException(status_code=404, detail="Active member not found in this organization")
+
+    member.status = "suspended"
+    member.org_id = None
+    db.add(member)
+    await db.commit()
+    return {"status": "success", "detail": "Member removed"}
+
+
+@router.delete("/invitations/{member_id}", response_model=dict[str, str])
+async def cancel_invitation(
+    member_id: str,
+    org: Organization = Depends(get_current_org),
+    _admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, str]:
+    import uuid
+    try:
+        member_uuid = uuid.UUID(member_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid member_id format")
+
+    result = await db.execute(
+        select(User).where(
+            User.id == member_uuid,
+            User.org_id == org.id,
+            User.status == "pending",
+        )
+    )
+    member = result.scalar_one_or_none()
+    if not member:
+        raise HTTPException(status_code=404, detail="Pending invitation not found in this organization")
+
+    await db.delete(member)
+    await db.commit()
+    return {"status": "success", "detail": "Invitation cancelled"}
+
