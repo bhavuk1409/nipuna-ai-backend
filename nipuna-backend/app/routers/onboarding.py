@@ -55,16 +55,27 @@ async def create_onboarding(
     user = user_result.scalar_one_or_none()
 
     if user is None:
-        user = User(
-            clerk_user_id=clerk_user_id,
-            email="",
-            first_name="",
-            last_name="",
-            status="active",
-            role="admin",
-        )
-        db.add(user)
-        await db.flush()  # gets user.id without committing
+        if body.email:
+            pending_result = await db.execute(
+                select(User).where(User.email == body.email, User.clerk_user_id == None)
+            )
+            user = pending_result.scalar_one_or_none()
+            if user:
+                user.clerk_user_id = clerk_user_id
+                user.status = "active"
+                logger.info("Matched pending user invitation in onboarding for email %s", body.email)
+
+        if user is None:
+            user = User(
+                clerk_user_id=clerk_user_id,
+                email="",
+                first_name="",
+                last_name="",
+                status="active",
+                role="admin",
+            )
+            db.add(user)
+            await db.flush()  # gets user.id without committing
 
     # ── 2. Find or create the org ───────────────────────────────────────────
     org: Organization | None = None

@@ -94,6 +94,21 @@ async def _handle_user_created(db: AsyncSession, data: dict) -> None:
     phone_list = data.get("phone_numbers", [])
     phone = phone_list[0].get("phone_number") if phone_list else None
 
+    # Check if a user with this email was already invited (has pending status)
+    if email:
+        pending_result = await db.execute(
+            select(User).where(User.email == email, User.clerk_user_id == None)
+        )
+        pending_user = pending_result.scalar_one_or_none()
+        if pending_user:
+            pending_user.clerk_user_id = clerk_user_id
+            pending_user.status = "active"
+            pending_user.first_name = data.get("first_name") or ""
+            pending_user.last_name = data.get("last_name") or ""
+            pending_user.phone = phone
+            logger.info("Matched pending user invitation for email %s and clerk_user_id %s", email, clerk_user_id)
+            return
+
     user = User(
         clerk_user_id=clerk_user_id,
         email=email,

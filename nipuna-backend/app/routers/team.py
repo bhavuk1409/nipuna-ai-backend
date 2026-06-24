@@ -84,25 +84,51 @@ async def invite_member(
     import logging
 
     logger = logging.getLogger(__name__)
-    logger.info(f"Sending Clerk invite: OrgID={org.clerk_org_id}, Email={body.email}, Role={clerk_role}")
+    
+    # Check if user is already in org
+    existing_user_result = await db.execute(
+        select(User).where(User.org_id == org.id, User.email == body.email)
+    )
+    if existing_user_result.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail="User is already a member of this organization")
 
-    async with httpx.AsyncClient() as client:
-        resp = await client.post(
-            f"https://api.clerk.com/v1/organizations/{org.clerk_org_id}/invitations",
-            headers={"Authorization": f"Bearer {settings.clerk_secret_key}"},
-            json={
-                "email_address": body.email,
-                "role": clerk_role,
-                "redirect_url": "https://app.nipunaai.in/dashboard",
-            },
+    clerk_invited = False
+    if org.clerk_org_id and not org.clerk_org_id.startswith("manual_"):
+        logger.info(f"Sending Clerk invite: OrgID={org.clerk_org_id}, Email={body.email}, Role={clerk_role}")
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(
+                    f"https://api.clerk.com/v1/organizations/{org.clerk_org_id}/invitations",
+                    headers={"Authorization": f"Bearer {settings.clerk_secret_key}"},
+                    json={
+                        "email_address": body.email,
+                        "role": clerk_role,
+                        "redirect_url": "https://app.nipunaai.in/dashboard",
+                    },
+                )
+                if resp.status_code in (200, 201):
+                    clerk_invited = True
+                else:
+                    error_data = resp.json()
+                    error_msg = error_data.get("errors", [{}])[0].get("message", "Unknown Clerk error")
+                    logger.warning(f"Clerk org invite returned {resp.status_code}: {error_msg}")
+        except Exception as e:
+            logger.warning(f"Error calling Clerk invitations API: {e}")
+
+    # Fallback to local DB invitation if not invited via Clerk
+    if not clerk_invited:
+        logger.info(f"Falling back to local DB invitation for Email={body.email}, Role={body.role}")
+        new_user = User(
+            email=body.email,
+            role=body.role,
+            status="pending",
+            org_id=org.id,
+            first_name="",
+            last_name="",
+            clerk_user_id=None,
         )
-        if resp.status_code not in (200, 201):
-            error_data = resp.json()
-            error_msg = error_data.get("errors", [{}])[0].get("message", "Unknown Clerk error")
-            raise HTTPException(
-                status_code=400,
-                detail=f"Clerk Error: {error_msg}",
-            )
+        db.add(new_user)
+        await db.commit()
 
     # Send custom invitation email via Resend
     email_html = f"""<!doctype html>
