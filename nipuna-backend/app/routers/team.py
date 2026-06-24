@@ -92,55 +92,21 @@ async def invite_member(
     if existing_user_result.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="User is already a member of this organization")
 
-    clerk_invited = False
-    if org.clerk_org_id and not org.clerk_org_id.startswith("manual_"):
-        logger.info(f"Sending Clerk invite: OrgID={org.clerk_org_id}, Email={body.email}, Role={clerk_role}")
-        try:
-            async with httpx.AsyncClient() as client:
-                resp = await client.post(
-                    f"https://api.clerk.com/v1/organizations/{org.clerk_org_id}/invitations",
-                    headers={"Authorization": f"Bearer {settings.clerk_secret_key}"},
-                    json={
-                        "email_address": body.email,
-                        "role": clerk_role,
-                        "redirect_url": f"{settings.frontend_url}/dashboard",
-                    },
-                )
-                if resp.status_code in (200, 201):
-                    clerk_invited = True
-                else:
-                    error_data = resp.json()
-                    error_msg = error_data.get("errors", [{}])[0].get("message", "Unknown Clerk error")
-                    logger.warning(f"Clerk org invite returned {resp.status_code}: {error_msg}")
-        except Exception as e:
-            logger.warning(f"Error calling Clerk invitations API: {e}")
-
-    # Fallback to local DB invitation if not invited via Clerk
-    if not clerk_invited:
-        logger.info(f"Falling back to local DB invitation for Email={body.email}, Role={body.role}")
-        import uuid
-        new_user = User(
-            email=body.email,
-            role=body.role,
-            status="pending",
-            org_id=org.id,
-            first_name="",
-            last_name="",
-            clerk_user_id=f"invited_{uuid.uuid4()}",
-        )
-        db.add(new_user)
-        await db.commit()
-
     # Check if the user already has an active/registered account on Nipuna AI
     has_account = False
+    existing_clerk_user_id = None
+    existing_user = None
+    
     local_check = await db.execute(
         select(User).where(
             User.email == body.email,
             ~User.clerk_user_id.like("invited_%")
         )
     )
-    if local_check.scalars().first() is not None:
+    existing_user = local_check.scalars().first()
+    if existing_user is not None:
         has_account = True
+        existing_clerk_user_id = existing_user.clerk_user_id
 
     if not has_account and settings.clerk_secret_key:
         try:
@@ -154,8 +120,90 @@ async def invite_member(
                     users_list = resp.json()
                     if len(users_list) > 0:
                         has_account = True
+                        existing_clerk_user_id = users_list[0].get("id")
         except Exception as e:
             logger.warning(f"Error checking user in Clerk: {e}")
+
+    clerk_invited = False
+    if org.clerk_org_id and not org.clerk_org_id.startswith("manual_"):
+        if existing_clerk_user_id:
+            # Existing user: add directly to Clerk Org memberships
+            logger.info(f"Adding existing user {existing_clerk_user_id} directly to Clerk Org {org.clerk_org_id}")
+            if settings.clerk_secret_key:
+                role_to_clerk = {
+                    "admin": "org:admin",
+                    "member": "org:member",
+                    "viewer": "org:member",
+                }
+                mapped_role = role_to_clerk.get(body.role, body.role)
+                try:
+                    async with httpx.AsyncClient() as client:
+                        resp = await client.post(
+                            f"https://api.clerk.com/v1/organizations/{org.clerk_org_id}/memberships",
+                            headers={"Authorization": f"Bearer {settings.clerk_secret_key}"},
+                            json={
+                                "user_id": existing_clerk_user_id,
+                                "role": mapped_role,
+                            },
+                        )
+                        if resp.status_code in (200, 201):
+                            logger.info("Successfully added user to Clerk organization memberships")
+                            clerk_invited = True
+                        else:
+                            logger.warning(f"Failed to add existing user to Clerk Org memberships: {resp.status_code} - {resp.text}")
+                except Exception as e:
+                    logger.error(f"Error calling Clerk memberships API: {e}")
+        
+        # If they weren't added to memberships (new user or failed), send Clerk invitation
+        if not clerk_invited:
+            logger.info(f"Sending Clerk invite: OrgID={org.clerk_org_id}, Email={body.email}, Role={clerk_role}")
+            try:
+                async with httpx.AsyncClient() as client:
+                    resp = await client.post(
+                        f"https://api.clerk.com/v1/organizations/{org.clerk_org_id}/invitations",
+                        headers={"Authorization": f"Bearer {settings.clerk_secret_key}"},
+                        json={
+                            "email_address": body.email,
+                            "role": clerk_role,
+                            "redirect_url": f"{settings.frontend_url}/dashboard",
+                        },
+                    )
+                    if resp.status_code in (200, 201):
+                        clerk_invited = True
+                    else:
+                        error_data = resp.json()
+                        error_msg = error_data.get("errors", [{}])[0].get("message", "Unknown Clerk error")
+                        logger.warning(f"Clerk org invite returned {resp.status_code}: {error_msg}")
+            except Exception as e:
+                logger.warning(f"Error calling Clerk invitations API: {e}")
+
+    # Always create local DB pending user invitation
+    logger.info(f"Creating local DB pending invitation for Email={body.email}, Role={body.role}")
+    import uuid
+    new_user = User(
+        email=body.email,
+        role=body.role,
+        status="pending",
+        org_id=org.id,
+        first_name="",
+        last_name="",
+        clerk_user_id=f"invited_{uuid.uuid4()}",
+    )
+    db.add(new_user)
+    await db.commit()
+
+    # Create app notification if they have an active account
+    if existing_user:
+        from app.models.alert import Alert
+        logger.info(f"Creating in-app notification for existing user org_id={existing_user.org_id}")
+        new_alert = Alert(
+            org_id=existing_user.org_id,
+            rule_id="TEAM_INVITATION",
+            severity="info",
+            message=f"You have been invited to join the workspace {org.name} as a {body.role}. Switch to it in the workspace dropdown or check your email to accept.",
+        )
+        db.add(new_alert)
+        await db.commit()
 
     join_url = f"{settings.frontend_url}/sign-in?email={body.email}" if has_account else f"{settings.frontend_url}/sign-up?email={body.email}"
 
@@ -423,6 +471,41 @@ async def accept_invitation(
     user.status = "active"
     db.add(user)
     await db.commit()
+
+    # Also sync with Clerk organization if it exists and clerk_user_id is active
+    from app.models.organization import Organization
+    org_res = await db.execute(select(Organization).where(Organization.id == user.org_id))
+    org = org_res.scalar_one_or_none()
+    if org and org.clerk_org_id and not org.clerk_org_id.startswith("manual_") and user.clerk_user_id and not user.clerk_user_id.startswith("invited_"):
+        import httpx
+        import logging
+        logger = logging.getLogger(__name__)
+        settings = get_settings()
+        if settings.clerk_secret_key:
+            role_to_clerk = {
+                "admin": "org:admin",
+                "member": "org:member",
+                "viewer": "org:member",
+            }
+            clerk_role = role_to_clerk.get(user.role, user.role)
+            logger.info(f"Adding user {user.clerk_user_id} to Clerk Org {org.clerk_org_id} with role {clerk_role} on accept")
+            try:
+                async with httpx.AsyncClient() as client:
+                    resp = await client.post(
+                        f"https://api.clerk.com/v1/organizations/{org.clerk_org_id}/memberships",
+                        headers={"Authorization": f"Bearer {settings.clerk_secret_key}"},
+                        json={
+                            "user_id": user.clerk_user_id,
+                            "role": clerk_role,
+                        },
+                    )
+                    if resp.status_code in (200, 201):
+                        logger.info("Successfully added user to Clerk organization memberships on accept")
+                    else:
+                        logger.warning(f"Failed to add user to Clerk organization memberships on accept: {resp.status_code} - {resp.text}")
+            except Exception as e:
+                logger.error(f"Error calling Clerk memberships API on accept: {e}")
+
     return {"status": "success", "detail": "Invitation accepted"}
 
 
@@ -433,9 +516,37 @@ async def decline_invitation(
 ) -> dict[str, str]:
     if user.status != "pending":
         raise HTTPException(status_code=400, detail="User is not pending invitation review")
+    
+    # Retrieve organization details before committing status change
+    from app.models.organization import Organization
+    org_res = await db.execute(select(Organization).where(Organization.id == user.org_id))
+    org = org_res.scalar_one_or_none()
+
     user.status = "declined"
     db.add(user)
     await db.commit()
+
+    # Also remove from Clerk organization if it exists and clerk_user_id is active
+    if org and org.clerk_org_id and not org.clerk_org_id.startswith("manual_") and user.clerk_user_id and not user.clerk_user_id.startswith("invited_"):
+        import httpx
+        import logging
+        logger = logging.getLogger(__name__)
+        settings = get_settings()
+        if settings.clerk_secret_key:
+            logger.info(f"Removing user {user.clerk_user_id} from Clerk Org {org.clerk_org_id} due to declined invite")
+            try:
+                async with httpx.AsyncClient() as client:
+                    resp = await client.delete(
+                        f"https://api.clerk.com/v1/organizations/{org.clerk_org_id}/memberships/{user.clerk_user_id}",
+                        headers={"Authorization": f"Bearer {settings.clerk_secret_key}"},
+                    )
+                    if resp.status_code == 200:
+                        logger.info("Successfully removed user from Clerk organization memberships")
+                    else:
+                        logger.warning(f"Failed to remove user from Clerk Org memberships: {resp.status_code} - {resp.text}")
+            except Exception as e:
+                logger.error(f"Error calling Clerk memberships delete API: {e}")
+
     return {"status": "success", "detail": "Invitation declined"}
 
 
