@@ -395,3 +395,89 @@ async def test_existing_user_invitation_migration(mock_jwt_decode, mock_get_jwks
         assert db_user.org_id == org_b_id
         assert db_user.status == "pending"
         assert db_user.role == "admin"
+
+
+@pytest.mark.asyncio
+@patch("app.dependencies.get_jwks")
+@patch("jose.jwt.decode")
+@patch("app.routers.team.send_email", new_callable=AsyncMock)
+async def test_resend_invitation(mock_send_email, mock_jwt_decode, mock_get_jwks, client, setup_test_org_and_admin):
+    org, admin = setup_test_org_and_admin
+
+    # Create a pending invitation
+    async with AsyncSessionLocal() as session:
+        pending_user = User(
+            clerk_user_id="invited_pending_resend_id",
+            org_id=org.id,
+            email="resend_invitee@example.com",
+            first_name="",
+            last_name="",
+            role="member",
+            status="pending",
+        )
+        session.add(pending_user)
+        await session.commit()
+        await session.refresh(pending_user)
+        pending_user_id = pending_user.id
+
+    mock_get_jwks.return_value = {}
+    mock_jwt_decode.return_value = {
+        "sub": admin.clerk_user_id,
+        "email": admin.email,
+        "iss": "https://elegant-locust-4.clerk.accounts.dev",
+    }
+
+    async with client as ac:
+        response = await ac.post(
+            f"/api/v1/team/invitations/{pending_user_id}/resend",
+            headers={"Authorization": "Bearer fake_token"},
+        )
+    assert response.status_code == 200
+    assert response.json()["status"] == "success"
+    mock_send_email.assert_called_once()
+
+
+@pytest.mark.asyncio
+@patch("app.dependencies.get_jwks")
+@patch("jose.jwt.decode")
+async def test_change_member_role(mock_jwt_decode, mock_get_jwks, client, setup_test_org_and_admin):
+    org, admin = setup_test_org_and_admin
+
+    # Create a member user in the org
+    async with AsyncSessionLocal() as session:
+        member = User(
+            clerk_user_id="member_role_change_clerk_id",
+            org_id=org.id,
+            email="member_to_change@example.com",
+            first_name="Member",
+            last_name="User",
+            role="member",
+            status="active",
+        )
+        session.add(member)
+        await session.commit()
+        await session.refresh(member)
+        member_id = member.id
+
+    mock_get_jwks.return_value = {}
+    mock_jwt_decode.return_value = {
+        "sub": admin.clerk_user_id,
+        "email": admin.email,
+        "iss": "https://elegant-locust-4.clerk.accounts.dev",
+    }
+
+    async with client as ac:
+        response = await ac.patch(
+            f"/api/v1/team/members/{member_id}/role",
+            headers={"Authorization": "Bearer fake_token"},
+            json={"role": "viewer"}
+        )
+    assert response.status_code == 200
+    assert response.json()["status"] == "success"
+
+    # Verify role was changed
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(select(User).where(User.id == member_id))
+        updated_member = result.scalar_one()
+        assert updated_member.role == "viewer"
+
