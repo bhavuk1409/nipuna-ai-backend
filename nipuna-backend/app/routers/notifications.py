@@ -49,19 +49,18 @@ def _to_notification(alert: Alert) -> NotificationResponse:
 
 
 async def _alerts_have_read_at_column(db: AsyncSession) -> bool:
-    result = await db.execute(
-        text(
-            """
-            SELECT EXISTS (
-                SELECT 1
-                FROM information_schema.columns
-                WHERE table_name = 'alerts'
-                  AND column_name = 'read_at'
-            )
-            """
-        )
-    )
-    return bool(result.scalar())
+    def check(session):
+        from sqlalchemy import inspect
+        # session is a synchronous Session object; get its bind connection
+        conn = session.connection()
+        insp = inspect(conn)
+        # Handle cases where table doesn't exist yet (e.g. initial setup)
+        if not insp.has_table("alerts"):
+            return False
+        columns = [c["name"] for c in insp.get_columns("alerts")]
+        return "read_at" in columns
+
+    return await db.run_sync(check)
 
 
 @router.get("", response_model=NotificationListResponse)

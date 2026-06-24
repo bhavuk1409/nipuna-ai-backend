@@ -23,12 +23,16 @@ class Base(DeclarativeBase):
     metadata = MetaData(naming_convention=naming_convention)
 
 
+connect_args = {}
+if settings.database_url.startswith("postgresql"):
+    connect_args["statement_cache_size"] = 0
+
 engine = create_async_engine(
     settings.database_url,
     echo=False,
     future=True,
     pool_pre_ping=True,
-    connect_args={"statement_cache_size": 0},
+    connect_args=connect_args,
 )
 
 AsyncSessionLocal = async_sessionmaker(
