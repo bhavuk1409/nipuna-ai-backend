@@ -359,10 +359,11 @@ async def test_existing_user_invitation_migration(mock_jwt_decode, mock_get_jwks
         await session.commit()
 
     mock_get_jwks.return_value = {}
-    # Log in as the existing user
+    # Log in as the existing user switching to Org B
     mock_jwt_decode.return_value = {
         "sub": "existing_user_clerk_id",
         "email": "existing_user@example.com",
+        "org_id": "manual_org_b",
         "iss": "https://elegant-locust-4.clerk.accounts.dev",
     }
 
