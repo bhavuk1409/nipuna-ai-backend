@@ -131,6 +131,34 @@ async def invite_member(
         db.add(new_user)
         await db.commit()
 
+    # Check if the user already has an active/registered account on Nipuna AI
+    has_account = False
+    local_check = await db.execute(
+        select(User).where(
+            User.email == body.email,
+            ~User.clerk_user_id.like("invited_%")
+        )
+    )
+    if local_check.scalars().first() is not None:
+        has_account = True
+
+    if not has_account and settings.clerk_secret_key:
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(
+                    "https://api.clerk.com/v1/users",
+                    headers={"Authorization": f"Bearer {settings.clerk_secret_key}"},
+                    params={"email_address": body.email},
+                )
+                if resp.status_code == 200:
+                    users_list = resp.json()
+                    if len(users_list) > 0:
+                        has_account = True
+        except Exception as e:
+            logger.warning(f"Error checking user in Clerk: {e}")
+
+    join_url = f"{settings.frontend_url}/sign-in?email={body.email}" if has_account else f"{settings.frontend_url}/sign-up?email={body.email}"
+
     # Send custom invitation email via Resend
     email_html = f"""<!doctype html>
 <html>
@@ -335,7 +363,7 @@ async def invite_member(
           
           <!-- Action Buttons -->
           <div style="margin-top: 32px; margin-bottom: 24px;">
-            <a href="{settings.frontend_url}/sign-up?email={body.email}" style="display: inline-block; background-color: #0f172a; color: #ffffff; text-decoration: none; padding: 12px 24px; font-size: 13px; font-weight: 600; border-radius: 6px; font-family: 'Inter', sans-serif; margin-right: 12px; margin-bottom: 8px;">
+            <a href="{join_url}" style="display: inline-block; background-color: #0f172a; color: #ffffff; text-decoration: none; padding: 12px 24px; font-size: 13px; font-weight: 600; border-radius: 6px; font-family: 'Inter', sans-serif; margin-right: 12px; margin-bottom: 8px;">
               Join Workspace &nbsp; <span style="font-size: 14px; font-weight: 400; vertical-align: middle;">➔</span>
             </a>
             <a href="{settings.frontend_url}/invite/decline?email={body.email}&org_id={org.id}" style="display: inline-block; background-color: #ffffff; color: #dc2626; border: 1px solid #fecaca; text-decoration: none; padding: 12px 24px; font-size: 13px; font-weight: 600; border-radius: 6px; font-family: 'Inter', sans-serif; margin-bottom: 8px;">
