@@ -97,7 +97,11 @@ async def _handle_user_created(db: AsyncSession, data: dict) -> None:
     # Check if a user with this email was already invited (has pending status)
     if email:
         pending_result = await db.execute(
-            select(User).where(User.email == email, User.clerk_user_id == None)
+            select(User).where(
+                User.email == email,
+                User.status == "pending",
+                User.clerk_user_id.like("invited_%")
+            )
         )
         pending_user = pending_result.scalar_one_or_none()
         if pending_user:

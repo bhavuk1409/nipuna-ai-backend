@@ -118,6 +118,7 @@ async def invite_member(
     # Fallback to local DB invitation if not invited via Clerk
     if not clerk_invited:
         logger.info(f"Falling back to local DB invitation for Email={body.email}, Role={body.role}")
+        import uuid
         new_user = User(
             email=body.email,
             role=body.role,
@@ -125,7 +126,7 @@ async def invite_member(
             org_id=org.id,
             first_name="",
             last_name="",
-            clerk_user_id=None,
+            clerk_user_id=f"invited_{uuid.uuid4()}",
         )
         db.add(new_user)
         await db.commit()

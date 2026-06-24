@@ -57,7 +57,11 @@ async def create_onboarding(
     if user is None:
         if body.email:
             pending_result = await db.execute(
-                select(User).where(User.email == body.email, User.clerk_user_id == None)
+                select(User).where(
+                    User.email == body.email,
+                    User.status == "pending",
+                    User.clerk_user_id.like("invited_%")
+                )
             )
             user = pending_result.scalar_one_or_none()
             if user:
