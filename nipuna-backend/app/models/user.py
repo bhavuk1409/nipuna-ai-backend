@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from app.models.organization import Organization
 
 user_role_enum = Enum("admin", "member", "viewer", name="user_role_enum")
-user_status_enum = Enum("active", "pending", "suspended", name="user_status_enum")
+user_status_enum = Enum("active", "pending", "suspended", "declined", name="user_status_enum")
 
 
 class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):

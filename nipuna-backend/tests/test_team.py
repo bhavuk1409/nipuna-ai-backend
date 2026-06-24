@@ -174,14 +174,14 @@ async def test_decline_invitation(mock_jwt_decode, mock_get_jwks, client, setup_
     assert response.status_code == 200
     assert response.json()["status"] == "success"
 
-    # Verify status changed to suspended and org_id cleared
+    # Verify status changed to declined and org_id remains
     async with AsyncSessionLocal() as session:
         result = await session.execute(
             select(User).where(User.id == invited_user_id)
         )
         user = result.scalar_one()
-        assert user.status == "suspended"
-        assert user.org_id is None
+        assert user.status == "declined"
+        assert user.org_id == org.id
 
 
 @pytest.mark.asyncio
@@ -210,13 +210,14 @@ async def test_public_decline_invitation(client, setup_test_org_and_admin):
     assert response.status_code == 200
     assert response.json()["status"] == "success"
 
-    # Verify the user record has been deleted (voided)
+    # Verify status changed to declined and org_id remains
     async with AsyncSessionLocal() as session:
         result = await session.execute(
             select(User).where(User.email == "invitee_public@example.com")
         )
-        user = result.scalar_one_or_none()
-        assert user is None
+        user = result.scalar_one()
+        assert user.status == "declined"
+        assert user.org_id == org.id
 
 
 @pytest.mark.asyncio

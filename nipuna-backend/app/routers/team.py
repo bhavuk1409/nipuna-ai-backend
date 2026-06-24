@@ -23,7 +23,7 @@ async def get_team_members(
     seats_used_result = await db.execute(
         select(func.count(User.id)).where(
             User.org_id == org.id,
-            User.status != "suspended",
+            User.status.in_(["active", "pending"]),
         )
     )
     seats_used = seats_used_result.scalar() or 0
@@ -71,7 +71,7 @@ async def invite_member(
     seats_result = await db.execute(
         select(func.count(User.id)).where(
             User.org_id == org.id,
-            User.status != "suspended",
+            User.status.in_(["active", "pending"]),
         )
     )
     seats_used = seats_result.scalar() or 0
@@ -405,8 +405,7 @@ async def decline_invitation(
 ) -> dict[str, str]:
     if user.status != "pending":
         raise HTTPException(status_code=400, detail="User is not pending invitation review")
-    user.status = "suspended"
-    user.org_id = None
+    user.status = "declined"
     db.add(user)
     await db.commit()
     return {"status": "success", "detail": "Invitation declined"}
@@ -435,9 +434,10 @@ async def public_decline_invitation(
     if not user:
         raise HTTPException(status_code=404, detail="Pending invitation not found")
 
-    await db.delete(user)
+    user.status = "declined"
+    db.add(user)
     await db.commit()
-    return {"status": "success", "detail": "Invitation declined and deleted"}
+    return {"status": "success", "detail": "Invitation declined"}
 
 
 @router.delete("/members/{member_id}", response_model=dict[str, str])
@@ -488,7 +488,7 @@ async def cancel_invitation(
         select(User).where(
             User.id == member_uuid,
             User.org_id == org.id,
-            User.status == "pending",
+            User.status.in_(["pending", "declined"]),
         )
     )
     member = result.scalar_one_or_none()
