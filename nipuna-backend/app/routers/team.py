@@ -103,7 +103,7 @@ async def invite_member(
                     json={
                         "email_address": body.email,
                         "role": clerk_role,
-                        "redirect_url": "https://app.nipunaai.in/dashboard",
+                        "redirect_url": f"{settings.frontend_url}/dashboard",
                     },
                 )
                 if resp.status_code in (200, 201):
@@ -335,7 +335,7 @@ async def invite_member(
           
           <!-- Action Button -->
           <div style="margin-top: 32px; margin-bottom: 24px;">
-            <a href="https://app.nipunaai.in/dashboard" style="display: inline-block; background-color: #0f172a; color: #ffffff; text-decoration: none; padding: 12px 24px; font-size: 13px; font-weight: 600; border-radius: 6px; font-family: 'Inter', sans-serif;">
+            <a href="{settings.frontend_url}/dashboard" style="display: inline-block; background-color: #0f172a; color: #ffffff; text-decoration: none; padding: 12px 24px; font-size: 13px; font-weight: 600; border-radius: 6px; font-family: 'Inter', sans-serif;">
               Join Workspace &nbsp; <span style="font-size: 14px; font-weight: 400; vertical-align: middle;">➔</span>
             </a>
           </div>

@@ -14,6 +14,7 @@ from app.models.organization import Organization
 from app.models.settings import OrgPreferences, WorkspaceSettings
 from app.models.user import User
 from app.schemas.auth import OnboardingRequest, OnboardingResponse
+from app.config import get_settings
 
 router = APIRouter(prefix="/onboarding", tags=["onboarding"])
 
@@ -157,6 +158,7 @@ async def create_onboarding(
     if email_to_use:
         import asyncio
         from app.services.notifications.email import send_email
+        settings = get_settings()
 
         first_name_to_use = body.first_name or user.first_name or "there"
         company_name_to_use = body.company_name or org.name or "your company"
@@ -262,7 +264,7 @@ async def create_onboarding(
                             <table border="0" cellpadding="0" cellspacing="0" width="100%" style="margin-top: 10px;">
                                 <tr>
                                     <td align="center">
-                                        <a href="https://app.nipunaai.in/dashboard" style="display: inline-block; padding: 14px 32px; background-color: #101012; color: #ffffff; text-decoration: none; border-radius: 6px; font-size: 14px; font-weight: 600; letter-spacing: -0.01em; box-shadow: 0 4px 10px rgba(16, 16, 18, 0.15); transition: background-color 0.2s ease;">
+                                        <a href="{settings.frontend_url}/dashboard" style="display: inline-block; padding: 14px 32px; background-color: #101012; color: #ffffff; text-decoration: none; border-radius: 6px; font-size: 14px; font-weight: 600; letter-spacing: -0.01em; box-shadow: 0 4px 10px rgba(16, 16, 18, 0.15); transition: background-color 0.2s ease;">
                                             Launch Command Center
                                         </a>
                                     </td>

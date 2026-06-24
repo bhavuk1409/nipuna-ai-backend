@@ -263,7 +263,7 @@ def _check_credit_low(session: Session, org: Organization, r) -> int:
           
           <!-- Action Button -->
           <div style="margin-top: 32px; margin-bottom: 24px; text-align: center;">
-            <a href="https://app.nipunaai.in/settings/billing" style="display: inline-block; background-color: #0f172a; color: #ffffff; text-decoration: none; padding: 12px 24px; font-size: 13px; font-weight: 600; border-radius: 6px; font-family: 'Inter', sans-serif;">
+            <a href="{settings.frontend_url}/settings/billing" style="display: inline-block; background-color: #0f172a; color: #ffffff; text-decoration: none; padding: 12px 24px; font-size: 13px; font-weight: 600; border-radius: 6px; font-family: 'Inter', sans-serif;">
               Manage Billing &nbsp; <span style="font-size: 14px; font-weight: 400; vertical-align: middle;">➔</span>
             </a>
           </div>
@@ -591,7 +591,7 @@ def _check_subscription_expiry(session: Session, org: Organization, r) -> int:
           
           <!-- Action Button -->
           <div style="margin-top: 32px; margin-bottom: 24px; text-align: center;">
-            <a href="https://app.nipunaai.in/settings/billing" style="display: inline-block; background-color: #0f172a; color: #ffffff; text-decoration: none; padding: 12px 24px; font-size: 13px; font-weight: 600; border-radius: 6px; font-family: 'Inter', sans-serif;">
+            <a href="{settings.frontend_url}/settings/billing" style="display: inline-block; background-color: #0f172a; color: #ffffff; text-decoration: none; padding: 12px 24px; font-size: 13px; font-weight: 600; border-radius: 6px; font-family: 'Inter', sans-serif;">
               Renew Subscription &nbsp; <span style="font-size: 14px; font-weight: 400; vertical-align: middle;">➔</span>
             </a>
           </div>

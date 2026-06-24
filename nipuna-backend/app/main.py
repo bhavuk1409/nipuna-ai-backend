@@ -36,6 +36,9 @@ CORS_ALLOWED_ORIGINS = [
 ]
 
 # Merge with configurable CORS_EXTRA_ORIGINS from settings
+if settings.frontend_url:
+    CORS_ALLOWED_ORIGINS.append(settings.frontend_url)
+
 if settings.cors_extra_origins:
     extra_origins = [orig.strip() for orig in settings.cors_extra_origins.split(",") if orig.strip()]
     CORS_ALLOWED_ORIGINS.extend(extra_origins)
