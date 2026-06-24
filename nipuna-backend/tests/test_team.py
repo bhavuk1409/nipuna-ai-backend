@@ -313,3 +313,84 @@ async def test_cancel_invitation_by_admin(mock_jwt_decode, mock_get_jwks, client
         )
         user = result.scalar_one_or_none()
         assert user is None
+
+
+@pytest.mark.asyncio
+@patch("app.dependencies.get_jwks")
+@patch("jose.jwt.decode")
+async def test_existing_user_invitation_migration(mock_jwt_decode, mock_get_jwks, client, setup_test_org_and_admin):
+    org_a, admin = setup_test_org_and_admin
+    
+    # Create another org (Org B)
+    async with AsyncSessionLocal() as session:
+        org_b = Organization(
+            name="Org B",
+            seats_max=5,
+            clerk_org_id="manual_org_b",
+        )
+        session.add(org_b)
+        await session.commit()
+        await session.refresh(org_b)
+        org_b_id = org_b.id
+
+        # Create an existing active user in Org A
+        existing_user = User(
+            clerk_user_id="existing_user_clerk_id",
+            org_id=org_a.id,
+            email="existing_user@example.com",
+            first_name="John",
+            last_name="Doe",
+            role="member",
+            status="active",
+        )
+        session.add(existing_user)
+
+        # Create a pending invitation for this same user's email under Org B
+        pending_invite = User(
+            clerk_user_id="invited_temp_id_123",
+            org_id=org_b_id,
+            email="existing_user@example.com",
+            first_name="",
+            last_name="",
+            role="admin",
+            status="pending",
+        )
+        session.add(pending_invite)
+        await session.commit()
+
+    mock_get_jwks.return_value = {}
+    # Log in as the existing user
+    mock_jwt_decode.return_value = {
+        "sub": "existing_user_clerk_id",
+        "email": "existing_user@example.com",
+        "iss": "https://elegant-locust-4.clerk.accounts.dev",
+    }
+
+    # Calling any authenticated endpoint triggers get_current_user token bootstrap resolver
+    async with client as ac:
+        response = await ac.get(
+            "/api/v1/auth/me",
+            headers={"Authorization": "Bearer fake_token"},
+        )
+    assert response.status_code == 200
+    user_data = response.json()
+    assert user_data["status"] == "pending"
+    assert user_data["role"] == "admin"
+    
+    # Verify DB state
+    async with AsyncSessionLocal() as session:
+        # The temporary invitation record should be deleted
+        temp_check = await session.execute(
+            select(User).where(User.clerk_user_id == "invited_temp_id_123")
+        )
+        assert temp_check.scalar_one_or_none() is None
+
+        # The existing user record should be updated
+        user_check = await session.execute(
+            select(User).where(User.clerk_user_id == "existing_user_clerk_id")
+        )
+        db_user = user_check.scalar_one_or_none()
+        assert db_user is not None
+        assert db_user.org_id == org_b_id
+        assert db_user.status == "pending"
+        assert db_user.role == "admin"

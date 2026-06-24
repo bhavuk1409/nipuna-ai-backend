@@ -74,10 +74,44 @@ async def resolve_current_user(token: Optional[str], db: AsyncSession) -> User:
     result = await db.execute(
         select(User).where(
             User.clerk_user_id == clerk_user_id,
-            User.status != "suspended",
         )
     )
     user = result.scalar_one_or_none()
+
+    if user is not None:
+        # Check if there is a pending invitation for this user's email under a different organization
+        from app.database import AsyncSessionLocal
+        async with AsyncSessionLocal() as bootstrap_db:
+            pending_check = await bootstrap_db.execute(
+                select(User).where(
+                    User.email == user.email,
+                    User.status == "pending",
+                    User.clerk_user_id.like("invited_%")
+                )
+            )
+            pending_invite = pending_check.scalar_one_or_none()
+            if pending_invite and pending_invite.org_id != user.org_id:
+                # Retrieve fresh copy in bootstrap_db to update
+                fresh_user_res = await bootstrap_db.execute(
+                    select(User).where(User.id == user.id)
+                )
+                fresh_user = fresh_user_res.scalar_one_or_none()
+                if fresh_user:
+                    fresh_user.org_id = pending_invite.org_id
+                    fresh_user.role = pending_invite.role
+                    fresh_user.status = "pending"
+                    
+                    await bootstrap_db.delete(pending_invite)
+                    await bootstrap_db.commit()
+                    
+                    # Re-fetch/refresh the user object in the request's main DB session
+                    await db.refresh(user)
+                    logger.info("Migrated existing user email=%s to new pending org_id=%s from invitation", user.email, fresh_user.org_id)
+        
+        # If the user is suspended and has no new invites, deny access
+        if user.status == "suspended":
+            raise HTTPException(status_code=403, detail="User account is suspended")
+
     if user is None:
         # Auto-create the user row if they authenticated with Clerk but
         # the webhook hasn't fired yet (race condition common in dev).
