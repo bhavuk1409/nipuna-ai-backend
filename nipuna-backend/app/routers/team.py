@@ -335,7 +335,7 @@ async def invite_member(
           
           <!-- Action Button -->
           <div style="margin-top: 32px; margin-bottom: 24px;">
-            <a href="{settings.frontend_url}/dashboard" style="display: inline-block; background-color: #0f172a; color: #ffffff; text-decoration: none; padding: 12px 24px; font-size: 13px; font-weight: 600; border-radius: 6px; font-family: 'Inter', sans-serif;">
+            <a href="{settings.frontend_url}/sign-up?email={body.email}" style="display: inline-block; background-color: #0f172a; color: #ffffff; text-decoration: none; padding: 12px 24px; font-size: 13px; font-weight: 600; border-radius: 6px; font-family: 'Inter', sans-serif;">
               Join Workspace &nbsp; <span style="font-size: 14px; font-weight: 400; vertical-align: middle;">➔</span>
             </a>
           </div>
