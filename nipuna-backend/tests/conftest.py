@@ -1,3 +1,10 @@
+import os
+import sys
+
+# Force tests to use local SQLite test database
+os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///test.db"
+os.environ["ENV"] = "test"
+
 import pytest
 import pytest_asyncio
 from app.database import engine
