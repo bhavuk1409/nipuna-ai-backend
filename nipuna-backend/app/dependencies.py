@@ -110,7 +110,6 @@ async def resolve_current_user(token: Optional[str], db: AsyncSession) -> User:
 
             token_clerk_org_id = claims.get("org_id")
             if token_clerk_org_id:
-                from app.models.organization import Organization
                 org_res = await bootstrap_db.execute(
                     select(Organization).where(Organization.clerk_org_id == token_clerk_org_id)
                 )
@@ -271,6 +270,20 @@ async def resolve_current_user(token: Optional[str], db: AsyncSession) -> User:
                     status_code=404,
                     detail="No workspace found for this user.",
                 )
+        else:
+            # Check if personal workspace exists in DB
+            personal_clerk_id = f"manual_{clerk_user_id}"
+            org_result = await db.execute(
+                select(Organization).where(Organization.clerk_org_id == personal_clerk_id)
+            )
+            personal_org = org_result.scalar_one_or_none()
+            if personal_org:
+                if user.org_id != personal_org.id:
+                    user.org_id = personal_org.id
+                    db.add(user)
+                    await db.commit()
+                    await db.refresh(user)
+                    logger.info("Synchronized user %s org_id to personal workspace %s", user.email, personal_org.id)
 
     return user
 
@@ -362,14 +375,26 @@ async def resolve_current_org(
             status_code=404,
             detail="No workspace found for this user.",
         )
+    else:
+        # Check if personal workspace exists in DB
+        clerk_user_id = claims.get("sub")
+        if clerk_user_id:
+            personal_clerk_id = f"manual_{clerk_user_id}"
+            result = await db.execute(
+                select(Organization).where(Organization.clerk_org_id == personal_clerk_id)
+            )
+            org = result.scalar_one_or_none()
+            if org is not None:
+                return org
 
-    if user.org_id:
-        result = await db.execute(
-            select(Organization).where(Organization.id == user.org_id)
-        )
-        org = result.scalar_one_or_none()
-        if org is not None:
-            return org
+        # Fallback to user.org_id
+        if user.org_id:
+            result = await db.execute(
+                select(Organization).where(Organization.id == user.org_id)
+            )
+            org = result.scalar_one_or_none()
+            if org is not None:
+                return org
 
     raise HTTPException(
         status_code=404,
