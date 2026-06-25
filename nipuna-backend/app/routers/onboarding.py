@@ -49,6 +49,23 @@ async def create_onboarding(
     if not clerk_user_id:
         raise HTTPException(status_code=401, detail="Invalid token claims")
 
+    # Enforce limit of 3 workspaces
+    settings = get_settings()
+    if settings.clerk_secret_key:
+        import httpx
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                f"https://api.clerk.com/v1/users/{clerk_user_id}/organization_memberships",
+                headers={"Authorization": f"Bearer {settings.clerk_secret_key}"},
+            )
+            if resp.status_code == 200:
+                memberships = resp.json().get("data", [])
+                if len(memberships) > 3:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="You have reached the maximum limit of 3 workspaces.",
+                    )
+
     # ── 1. Upsert the user row ──────────────────────────────────────────────
     user_result = await db.execute(
         select(User).where(User.clerk_user_id == clerk_user_id)
