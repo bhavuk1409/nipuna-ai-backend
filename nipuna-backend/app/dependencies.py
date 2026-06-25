@@ -246,12 +246,18 @@ async def resolve_current_user(token: Optional[str], db: AsyncSession) -> User:
                 select(Organization).where(Organization.clerk_org_id == clerk_org_id)
             )
             clerk_org = org_result.scalar_one_or_none()
-            if clerk_org and user.org_id != clerk_org.id:
-                user.org_id = clerk_org.id
-                db.add(user)
-                await db.commit()
-                await db.refresh(user)
-                logger.info("Synchronized user %s org_id to Clerk active org_id %s", user.email, clerk_org.id)
+            if clerk_org:
+                if user.org_id != clerk_org.id:
+                    user.org_id = clerk_org.id
+                    db.add(user)
+                    await db.commit()
+                    await db.refresh(user)
+                    logger.info("Synchronized user %s org_id to Clerk active org_id %s", user.email, clerk_org.id)
+            else:
+                raise HTTPException(
+                    status_code=404,
+                    detail="No workspace found for this user.",
+                )
 
     return user
 
@@ -339,6 +345,10 @@ async def resolve_current_org(
         org = result.scalar_one_or_none()
         if org is not None:
             return org
+        raise HTTPException(
+            status_code=404,
+            detail="No workspace found for this user.",
+        )
 
     if user.org_id:
         result = await db.execute(
