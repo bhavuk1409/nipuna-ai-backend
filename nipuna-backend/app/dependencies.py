@@ -231,14 +231,27 @@ async def resolve_current_user(token: Optional[str], db: AsyncSession) -> User:
             )
 
     if user is not None:
-        # Self-heal missing/mismatched email from Clerk claims
+        # Self-heal missing/mismatched email and names from Clerk claims
         clerk_email = claims.get("email")
+        clerk_first = claims.get("first_name") or claims.get("given_name")
+        clerk_last = claims.get("last_name") or claims.get("family_name")
+        
+        updated = False
         if clerk_email and user.email != clerk_email:
             user.email = clerk_email
+            updated = True
+        if clerk_first and not user.first_name:
+            user.first_name = clerk_first
+            updated = True
+        if clerk_last and not user.last_name:
+            user.last_name = clerk_last
+            updated = True
+            
+        if updated:
             db.add(user)
             await db.commit()
             await db.refresh(user)
-            logger.info("Self-healed user email to %s from Clerk claims", clerk_email)
+            logger.info("Self-healed user profile fields from Clerk claims")
 
         clerk_org_id = claims.get("org_id")
         if clerk_org_id:
