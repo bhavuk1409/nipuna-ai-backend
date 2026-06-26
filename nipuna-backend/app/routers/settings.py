@@ -59,10 +59,11 @@ async def delete_workspace(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, str]:
+    # Block any attempt to delete a personal/manual workspace
     if clerk_org_id.startswith("manual_") or clerk_org_id == "manual":
         raise HTTPException(
             status_code=400,
-            detail="Main workspace cannot be deleted"
+            detail="This workspace cannot be deleted."
         )
 
     # Fetch the organization
@@ -111,36 +112,16 @@ async def delete_workspace(
             detail="Only workspace administrators can delete this workspace"
         )
 
-    # Safety: update all users linked to this organization so they are not cascade-deleted
+    # Safety: nullify org_id for all users linked to this organization
+    # They must be re-assigned to another workspace on the frontend after deletion
     users_result = await db.execute(
         select(User).where(User.org_id == org.id)
     )
     active_users = users_result.scalars().all()
 
     for u in active_users:
-        # Find or create their personal workspace (manual_{u.clerk_user_id})
-        personal_clerk_id = f"manual_{u.clerk_user_id}"
-        p_org_result = await db.execute(
-            select(Organization).where(Organization.clerk_org_id == personal_clerk_id)
-        )
-        p_org = p_org_result.scalar_one_or_none()
-        if not p_org:
-            p_org = Organization(
-                clerk_org_id=personal_clerk_id,
-                name="Main Workspace",
-                plan="free",
-                seats_max=5,
-                ai_credits=100,
-            )
-            db.add(p_org)
-            await db.flush() # get ID
-            
-            # Ensure workspace settings and preferences exist for the personal workspace
-            db.add(WorkspaceSettings(org_id=p_org.id, name=p_org.name))
-            db.add(OrgPreferences(org_id=p_org.id))
-
-        u.org_id = p_org.id
-        u.role = "admin"
+        # Detach user from the deleted org; the frontend will redirect them
+        u.org_id = None
         db.add(u)
 
     # Log before deleting the organization from Clerk and database

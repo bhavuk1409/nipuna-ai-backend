@@ -60,7 +60,7 @@ async def create_onboarding(
             )
             if resp.status_code == 200:
                 memberships = resp.json().get("data", [])
-                if len(memberships) >= 2:
+                if len(memberships) >= 3:
                     raise HTTPException(
                         status_code=400,
                         detail="You have reached the maximum limit of 3 workspaces.",
