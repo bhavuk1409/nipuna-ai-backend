@@ -32,6 +32,16 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/chat", tags=["chat"])
 
 
+def require_chat_permission(user: User = Depends(get_current_user)) -> User:
+    """Viewers cannot send chat messages — only admin and member roles can."""
+    if user.role == "viewer":
+        raise HTTPException(
+            status_code=403,
+            detail="Viewers have read-only access and cannot use the AI chat."
+        )
+    return user
+
+
 # ──────────────────────────────────────────────────────────────────
 # Helpers
 # ──────────────────────────────────────────────────────────────────
@@ -146,7 +156,7 @@ async def _get_rag_chunks(org: Organization, query: str) -> list[dict]:
 async def send_message(
     body: ChatRequest,
     org: Organization = Depends(get_current_org),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_chat_permission),
     db: AsyncSession = Depends(get_db),
 ) -> ChatResponse:
     if org.ai_credits <= 0:
@@ -233,7 +243,7 @@ async def send_message(
 async def stream_message(
     body: ChatRequest,
     org: Organization = Depends(get_current_org),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_chat_permission),
     db: AsyncSession = Depends(get_db),
 ):
     """

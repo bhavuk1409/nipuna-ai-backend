@@ -14,6 +14,13 @@ from app.services.notifications.email import send_email
 router = APIRouter(prefix="/team", tags=["team"])
 
 
+def require_admin_or_member(user: User = Depends(get_current_user)) -> User:
+    """Allow admin and member roles; block viewers."""
+    if user.role == "viewer":
+        raise HTTPException(status_code=403, detail="Viewers do not have permission to perform this action.")
+    return user
+
+
 @router.get("/members", response_model=TeamResponse)
 async def get_team_members(
     org: Organization = Depends(get_current_org),
