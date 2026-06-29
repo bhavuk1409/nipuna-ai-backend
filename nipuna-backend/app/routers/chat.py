@@ -114,6 +114,7 @@ async def _get_or_create_default_agent(db: AsyncSession, org_id: uuid.UUID, user
         return agent
 
     # If no agent exists, auto-create a default one
+    # Note: flush() is sufficient here - the caller owns the transaction and will commit
     agent = Agent(
         org_id=org_id,
         name="Nipuna AI",
@@ -124,7 +125,6 @@ async def _get_or_create_default_agent(db: AsyncSession, org_id: uuid.UUID, user
     )
     db.add(agent)
     await db.flush()
-    await db.commit()
     return agent
 
 
@@ -361,12 +361,53 @@ async def stream_message(
 @router.get("/history")
 async def get_chat_history(
     agent_id: str | None = None,
+    conversation_id: str | None = None,
     limit: int = 50,
     org: Organization = Depends(get_current_org),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Return recent messages for the given agent's conversation with this user."""
+    """Return recent messages for the given conversation or agent."""
+    # If conversation_id is provided, return that specific conversation
+    if conversation_id:
+        try:
+            conv_uuid = uuid.UUID(conversation_id.replace("chat-", ""))
+            conv_result = await db.execute(
+                select(Conversation).where(
+                    Conversation.id == conv_uuid,
+                    Conversation.org_id == org.id,
+                )
+            )
+            conversation = conv_result.scalar_one_or_none()
+            if conversation:
+                msgs_result = await db.execute(
+                    select(Message)
+                    .where(
+                        Message.conversation_id == conversation.id,
+                        Message.role.in_(["user", "assistant"]),
+                        Message.tool_call.is_(False),
+                    )
+                    .order_by(Message.created_at.desc())
+                    .limit(limit)
+                )
+                msgs = list(reversed(msgs_result.scalars().all()))
+                return {
+                    "conversation_id": str(conversation.id),
+                    "messages": [
+                        {
+                            "id": str(m.id),
+                            "role": m.role,
+                            "content": m.content,
+                            "created_at": m.created_at.isoformat() if m.created_at else None,
+                            "tool_calls_made": 1 if m.tool_call else 0,
+                        }
+                        for m in msgs
+                    ],
+                }
+        except ValueError:
+            pass
+
+    # Otherwise return most recent conversation for the agent
     agent = await _get_or_create_default_agent(db, org.id, user.id, agent_id)
 
     result = await db.execute(
@@ -374,9 +415,9 @@ async def get_chat_history(
             Conversation.org_id == org.id,
             Conversation.agent_id == agent.id,
             Conversation.user_id == user.id,
-        )
+        ).order_by(Conversation.created_at.desc())
     )
-    conversation = result.scalar_one_or_none()
+    conversation = result.scalars().first()
     if not conversation:
         return {"conversation_id": None, "messages": []}
 

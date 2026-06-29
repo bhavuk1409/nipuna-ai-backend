@@ -35,7 +35,7 @@ async def list_agents(
 async def create_agent(
     body: AgentCreate,
     org: Organization = Depends(get_current_org),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ) -> AgentResponse:
     agent = Agent(
@@ -81,7 +81,7 @@ async def update_agent(
     agent_id: UUID,
     body: AgentUpdate,
     org: Organization = Depends(get_current_org),
-    _user: User = Depends(get_current_user),
+    _user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ) -> AgentResponse:
     result = await db.execute(

@@ -211,7 +211,11 @@ async def _handle_membership_created(db: AsyncSession, data: dict) -> None:
 
     user.org_id = org.id
     clerk_role = data.get("role", "org:member")
-    user.role = "admin" if clerk_role == "org:admin" else "member"
+    # Map Clerk role to our internal role, but preserve viewer role if already set
+    if clerk_role == "org:admin":
+        user.role = "admin"
+    elif user.role not in ("admin", "viewer"):  # don't downgrade admins or strip viewer
+        user.role = "member"
 
     await log_action(
         db,

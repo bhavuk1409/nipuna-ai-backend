@@ -86,6 +86,8 @@ async def invite_member(
         raise HTTPException(status_code=400, detail="Seat limit reached")
 
     settings = get_settings()
+    # Always invite as 'member' — role selection is removed from the UI
+    body.role = "member"
     clerk_role = body.role
     import httpx
     import logging
@@ -171,7 +173,7 @@ async def invite_member(
                         headers={"Authorization": f"Bearer {settings.clerk_secret_key}"},
                         json={
                             "email_address": body.email,
-                            "role": clerk_role,
+                            "role": "org:member",  # Clerk only supports org:admin / org:member
                             "redirect_url": f"{settings.frontend_url}/dashboard",
                         },
                     )
@@ -185,29 +187,42 @@ async def invite_member(
                 logger.warning(f"Error calling Clerk invitations API: {e}")
 
     # Always create local DB pending user invitation
-    logger.info(f"Creating local DB pending invitation for Email={body.email}, Role={body.role}")
-    import uuid
-    new_user = User(
-        email=body.email,
-        role=body.role,
-        status="pending",
-        org_id=org.id,
-        first_name="",
-        last_name="",
-        clerk_user_id=f"invited_{uuid.uuid4()}",
-    )
-    db.add(new_user)
-    await db.commit()
+    # But skip if the existing user is already tracked (has_account via local DB)
+    # to avoid a duplicate pending row for an already-registered user
+    import uuid as uuid_mod
+    if not (existing_user and existing_user.org_id == org.id):
+        # Only create a new pending invite row if one doesn't already exist
+        dup_check = await db.execute(
+            select(User).where(
+                User.email == body.email,
+                User.org_id == org.id,
+                User.status == "pending",
+                User.clerk_user_id.like("invited_%"),
+            )
+        )
+        if dup_check.scalar_one_or_none() is None:
+            logger.info(f"Creating local DB pending invitation for Email={body.email}, Role={body.role}")
+            new_user = User(
+                email=body.email,
+                role=body.role,
+                status="pending",
+                org_id=org.id,
+                first_name="",
+                last_name="",
+                clerk_user_id=f"invited_{uuid_mod.uuid4()}",
+            )
+            db.add(new_user)
+            await db.commit()
 
-    # Create app notification if they have an active account
-    if existing_user:
+    # Create in-app notification for existing Nipuna users so it shows in their bell
+    if existing_user and existing_user.org_id:
         from app.models.alert import Alert
         logger.info(f"Creating in-app notification for existing user org_id={existing_user.org_id}")
         new_alert = Alert(
             org_id=existing_user.org_id,
             rule_id="TEAM_INVITATION",
             severity="info",
-            message=f"You have been invited to join the workspace {org.name} as a {body.role}. Switch to it in the workspace dropdown or check your email to accept.",
+            message=f"You have been invited to join the workspace '{org.name}' as a {body.role}.",
         )
         db.add(new_alert)
         await db.commit()
@@ -413,7 +428,7 @@ async def invite_member(
           </h2>
           <p style="font-size: 14px; line-height: 1.6; color: #475569; margin: 0 0 24px 0; font-weight: 400;">
             Hello,<br><br>
-            You have been invited to join the <strong>{org.name}</strong> workspace on Nipuna AI as a <strong>{body.role}</strong>. Nipuna AI helps teams manage execution, approvals, and enterprise automation coverage with AI-driven agents.
+            You have been invited to join the <strong>{org.name}</strong> workspace on Nipuna AI. Nipuna AI helps teams manage execution, approvals, and enterprise automation coverage with AI-driven agents.
           </p>
           
           <!-- Action Buttons -->
@@ -1069,7 +1084,7 @@ async def resend_invitation(
           </h2>
           <p style="font-size: 14px; line-height: 1.6; color: #475569; margin: 0 0 24px 0; font-weight: 400;">
             Hello,<br><br>
-            This is a reminder that you have been invited to join the <strong>{org.name}</strong> workspace on Nipuna AI as a <strong>{member.role}</strong>.
+             This is a reminder that you have been invited to join the <strong>{org.name}</strong> workspace on Nipuna AI.
           </p>
           
           <!-- Action Buttons -->

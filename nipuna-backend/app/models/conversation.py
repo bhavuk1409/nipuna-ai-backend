@@ -19,7 +19,8 @@ message_role_enum = Enum("user", "assistant", "system", name="message_role_enum"
 
 class Conversation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "conversations"
-    __table_args__ = (UniqueConstraint("org_id", "agent_id", "user_id", name="uq_conversations_org_agent_user"),)
+    # Removed unique constraint — users can have multiple conversations per agent
+    __table_args__ = ()
 
     org_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
     agent_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("agents.id", ondelete="CASCADE"), nullable=False, index=True)

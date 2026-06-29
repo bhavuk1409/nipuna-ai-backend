@@ -255,6 +255,14 @@ async def clear_notifications(
     _user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> NotificationActionResponse:
-    await db.execute(delete(Alert).where(Alert.org_id == org.id))
+    # Only delete non-invitation alerts — TEAM_INVITATION entries are
+    # derived from the pending User rows, not from the alerts table directly,
+    # but we still exclude them here to avoid any stale rows
+    await db.execute(
+        delete(Alert).where(
+            Alert.org_id == org.id,
+            Alert.rule_id != "TEAM_INVITATION",
+        )
+    )
     await db.commit()
     return NotificationActionResponse(status="ok")

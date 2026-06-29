@@ -27,4 +27,5 @@ class TeamResponse(BaseModel):
 
 class InviteRequest(BaseModel):
     email: str = Field(..., max_length=320)
-    role: str = Field(..., pattern=r"^(admin|member|viewer)$")
+    # role is kept for backwards compatibility but is always overridden to "member" in the router
+    role: str = Field(default="member", pattern=r"^(admin|member|viewer)$")

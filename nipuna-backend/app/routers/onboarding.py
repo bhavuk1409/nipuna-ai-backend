@@ -137,6 +137,19 @@ async def create_onboarding(
     if user.org_id is None:
         user.org_id = org.id
         user.role = "admin"
+    elif user.org_id == org.id:
+        # Existing link — ensure the creator is always admin for their own org
+        # (only elevate, never demote an already-admin user)
+        if user.role not in ("admin",):
+            pass  # keep their existing role for invited users
+    else:
+        # User is switching to a different org context — update the link
+        user.org_id = org.id
+        user.role = "admin"
+
+    # Ensure user is active after completing onboarding
+    if user.status == "pending":
+        user.status = "active"
 
     # ── 4. Ensure WorkspaceSettings row ────────────────────────────────────
     ws_result = await db.execute(
