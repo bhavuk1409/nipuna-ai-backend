@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.database import get_db
-from app.dependencies import get_current_org, get_current_user, require_admin
+from app.dependencies import get_current_org, get_current_user
 from app.models.organization import Organization
 from app.models.settings import OrgPreferences, WorkspaceSettings
 from app.models.user import User
@@ -204,7 +204,7 @@ async def update_preferences(
 async def delete_account(
     body: dict[str, str],
     org: Organization = Depends(get_current_org),
-    user: User = Depends(require_admin),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, str]:
     confirm = body.get("confirm", "")

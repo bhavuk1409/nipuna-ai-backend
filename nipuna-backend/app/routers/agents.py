@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.dependencies import get_current_org, get_current_user, require_admin
+from app.dependencies import get_current_org, get_current_user
 from app.models.agent import Agent
 from app.models.organization import Organization
 from app.models.user import User
@@ -35,7 +35,7 @@ async def list_agents(
 async def create_agent(
     body: AgentCreate,
     org: Organization = Depends(get_current_org),
-    user: User = Depends(require_admin),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> AgentResponse:
     agent = Agent(
@@ -107,7 +107,7 @@ async def update_agent(
 async def delete_agent(
     agent_id: UUID,
     org: Organization = Depends(get_current_org),
-    user: User = Depends(require_admin),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, str]:
     result = await db.execute(

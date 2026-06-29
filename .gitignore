@@ -25,3 +25,4 @@ test.db
 # OS specific files
 .DS_Store
 Thumbs.db
+nipuna-desktop/dist/

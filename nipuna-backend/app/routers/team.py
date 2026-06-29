@@ -5,7 +5,7 @@ from sqlalchemy.orm import joinedload
 
 from app.config import get_settings
 from app.database import get_db
-from app.dependencies import get_current_org, get_current_user, require_admin
+from app.dependencies import get_current_org, get_current_user
 from app.models.organization import Organization
 from app.models.user import User
 from app.schemas.team import InviteRequest, MemberResponse, TeamResponse
@@ -13,12 +13,6 @@ from app.services.notifications.email import send_email
 
 router = APIRouter(prefix="/team", tags=["team"])
 
-
-def require_admin_or_member(user: User = Depends(get_current_user)) -> User:
-    """Allow admin and member roles; block viewers."""
-    if user.role == "viewer":
-        raise HTTPException(status_code=403, detail="Viewers do not have permission to perform this action.")
-    return user
 
 
 @router.get("/members", response_model=TeamResponse)
@@ -72,7 +66,7 @@ async def get_team_members(
 async def invite_member(
     body: InviteRequest,
     org: Organization = Depends(get_current_org),
-    _user: User = Depends(require_admin),
+    _user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, str]:
     seats_result = await db.execute(
@@ -724,7 +718,7 @@ async def public_decline_invitation(
 async def remove_member(
     member_id: str,
     org: Organization = Depends(get_current_org),
-    _admin: User = Depends(require_admin),
+    _user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, str]:
     import uuid
@@ -755,7 +749,7 @@ async def remove_member(
 async def cancel_invitation(
     member_id: str,
     org: Organization = Depends(get_current_org),
-    _admin: User = Depends(require_admin),
+    _user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, str]:
     import uuid
@@ -784,7 +778,7 @@ async def cancel_invitation(
 async def resend_invitation(
     member_id: str,
     org: Organization = Depends(get_current_org),
-    _admin: User = Depends(require_admin),
+    _user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, str]:
     import uuid
@@ -1146,71 +1140,4 @@ async def resend_invitation(
     return {"status": "success", "detail": "Invitation resent"}
 
 
-class ChangeRoleRequest(BaseModel):
-    role: str
-
-
-@router.patch("/members/{member_id}/role", response_model=dict[str, str])
-async def change_member_role(
-    member_id: str,
-    body: ChangeRoleRequest,
-    org: Organization = Depends(get_current_org),
-    _admin: User = Depends(require_admin),
-    db: AsyncSession = Depends(get_db),
-) -> dict[str, str]:
-    if body.role not in ("admin", "member", "viewer"):
-        raise HTTPException(status_code=400, detail="Invalid role value")
-
-    import uuid
-    try:
-        member_uuid = uuid.UUID(member_id)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid member_id format")
-
-    result = await db.execute(
-        select(User).where(
-            User.id == member_uuid,
-            User.org_id == org.id,
-        )
-    )
-    member = result.scalar_one_or_none()
-    if not member:
-        raise HTTPException(status_code=404, detail="Member or invitation not found in this organization")
-
-    # Update role
-    member.role = body.role
-    db.add(member)
-    await db.commit()
-
-    # Sync with Clerk organization memberships if available and they have an active account
-    if org.clerk_org_id and not org.clerk_org_id.startswith("manual_") and member.clerk_user_id and not member.clerk_user_id.startswith("invited_"):
-        settings = get_settings()
-        if settings.clerk_secret_key:
-            import httpx
-            import logging
-            logger = logging.getLogger(__name__)
-            role_to_clerk = {
-                "admin": "org:admin",
-                "member": "org:member",
-                "viewer": "org:member",
-            }
-            clerk_role = role_to_clerk.get(body.role, body.role)
-            logger.info(f"Updating user {member.clerk_user_id} role in Clerk Org {org.clerk_org_id} to {clerk_role}")
-            try:
-                async with httpx.AsyncClient() as client:
-                    resp = await client.patch(
-                        f"https://api.clerk.com/v1/organizations/{org.clerk_org_id}/memberships/{member.clerk_user_id}",
-                        headers={"Authorization": f"Bearer {settings.clerk_secret_key}"},
-                        json={
-                            "role": clerk_role,
-                        },
-                    )
-                    if resp.status_code in (200, 201):
-                        logger.info("Successfully updated user role in Clerk")
-                    else:
-                        logger.warning(f"Failed to update Clerk Org role: {resp.status_code} - {resp.text}")
-            except Exception as e:
-                logger.error(f"Error calling Clerk memberships update API: {e}")
-
-    return {"status": "success", "detail": "Role changed successfully"}
 

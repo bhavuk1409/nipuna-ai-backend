@@ -30,12 +30,6 @@ from app.services.mcp.gateway import AVAILABLE_PROVIDERS, composio_gateway, chec
 router = APIRouter(prefix="/integrations", tags=["integrations"])
 
 
-def require_admin_role(user: User = Depends(get_current_user)) -> User:
-    """Only admins can manage integrations."""
-    if user.role != "admin":
-        raise HTTPException(status_code=403, detail="Only workspace admins can manage integrations.")
-    return user
-
 
 
 
@@ -213,7 +207,7 @@ async def oauth_callback(
 async def initialize_integration(
     body: IntegrationInitializeRequest,
     org: Organization = Depends(get_current_org),
-    _user: User = Depends(require_admin_role),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> IntegrationResponse:
     if body.provider not in AVAILABLE_PROVIDERS:
@@ -249,7 +243,7 @@ async def connect_integration(
     integration_id: UUID,
     body: IntegrationConnectRequest,
     org: Organization = Depends(get_current_org),
-    user: User = Depends(require_admin_role),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Any:
     result = await db.execute(
@@ -304,7 +298,7 @@ async def connect_integration(
 async def disconnect_integration(
     integration_id: UUID,
     org: Organization = Depends(get_current_org),
-    user: User = Depends(require_admin_role),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> IntegrationResponse:
     result = await db.execute(
