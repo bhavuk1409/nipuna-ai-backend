@@ -219,10 +219,10 @@ async def send_message(
     )
     db.add(assistant_msg)
 
-    # Deduct one AI credit per turn atomically
+    # Deduct one AI credit per turn atomically (floor at 0 to prevent negatives)
     from sqlalchemy import text
     await db.execute(
-        text("UPDATE organizations SET ai_credits = ai_credits - 1 WHERE id = :org_id"),
+        text("UPDATE organizations SET ai_credits = ai_credits - 1 WHERE id = :org_id AND ai_credits > 0"),
         {"org_id": org.id}
     )
 
@@ -335,7 +335,7 @@ async def stream_message(
                 
                 from sqlalchemy import text
                 await db.execute(
-                    text("UPDATE organizations SET ai_credits = ai_credits - 1 WHERE id = :org_id"),
+                    text("UPDATE organizations SET ai_credits = ai_credits - 1 WHERE id = :org_id AND ai_credits > 0"),
                     {"org_id": org.id}
                 )
                 await db.commit()

@@ -862,7 +862,7 @@ async def resend_invitation(
                     logger.error(f"Error calling Clerk memberships API on resend: {e}")
         
         if not clerk_invited:
-            logger.info(f"Sending Clerk invite on resend: OrgID={org.clerk_org_id}, Email={member.email}, Role={member.role}")
+            logger.info(f"Sending Clerk invite on resend: OrgID={org.clerk_org_id}, Email={member.email}, Role={mapped_role}")
             try:
                 async with httpx.AsyncClient() as client:
                     await client.post(
@@ -870,7 +870,7 @@ async def resend_invitation(
                         headers={"Authorization": f"Bearer {settings.clerk_secret_key}"},
                         json={
                             "email_address": member.email,
-                            "role": member.role,
+                            "role": mapped_role,
                             "redirect_url": f"{settings.frontend_url}/dashboard",
                         },
                     )

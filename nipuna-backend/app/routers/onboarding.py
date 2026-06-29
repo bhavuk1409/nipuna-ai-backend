@@ -90,9 +90,9 @@ async def create_onboarding(
         if user is None:
             user = User(
                 clerk_user_id=clerk_user_id,
-                email="",
-                first_name="",
-                last_name="",
+                email=body.email or "",
+                first_name=body.first_name or "",
+                last_name=body.last_name or "",
                 status="active",
                 role="admin",
             )

@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import delete, func, select, text, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -48,20 +48,6 @@ def _to_notification(alert: Alert) -> NotificationResponse:
     )
 
 
-async def _alerts_have_read_at_column(db: AsyncSession) -> bool:
-    def check(session):
-        from sqlalchemy import inspect
-        # session is a synchronous Session object; get its bind connection
-        conn = session.connection()
-        insp = inspect(conn)
-        # Handle cases where table doesn't exist yet (e.g. initial setup)
-        if not insp.has_table("alerts"):
-            return False
-        columns = [c["name"] for c in insp.get_columns("alerts")]
-        return "read_at" in columns
-
-    return await db.run_sync(check)
-
 
 @router.get("", response_model=NotificationListResponse)
 async def list_notifications(
@@ -69,52 +55,22 @@ async def list_notifications(
     _user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> NotificationListResponse:
-    has_read_at = await _alerts_have_read_at_column(db)
-
-    if has_read_at:
-        result = await db.execute(
-            select(Alert)
-            .where(Alert.org_id == org.id, Alert.rule_id != "TEAM_INVITATION")
-            .order_by(Alert.created_at.desc())
-            .limit(50)
+    result = await db.execute(
+        select(Alert)
+        .where(Alert.org_id == org.id, Alert.rule_id != "TEAM_INVITATION")
+        .order_by(Alert.created_at.desc())
+        .limit(50)
+    )
+    alerts = result.scalars().all()
+    unread_result = await db.execute(
+        select(func.count(Alert.id)).where(
+            Alert.org_id == org.id,
+            Alert.read_at.is_(None),
+            Alert.rule_id != "TEAM_INVITATION",
         )
-        alerts = result.scalars().all()
-        unread_result = await db.execute(
-            select(func.count(Alert.id)).where(
-                Alert.org_id == org.id,
-                Alert.read_at.is_(None),
-                Alert.rule_id != "TEAM_INVITATION",
-            )
-        )
-        unread_count = int(unread_result.scalar() or 0)
-        notifications = [_to_notification(alert) for alert in alerts]
-    else:
-        result = await db.execute(
-            text(
-                """
-                SELECT id, rule_id, severity, message, delivered_at, created_at
-                FROM alerts
-                WHERE org_id = :org_id AND rule_id != 'TEAM_INVITATION'
-                ORDER BY created_at DESC
-                LIMIT 50
-                """
-            ),
-            {"org_id": org.id},
-        )
-        rows = result.mappings().all()
-        notifications = [
-            NotificationResponse(
-                id=row["id"],
-                title=_notification_title(row["rule_id"]),
-                description=row["message"],
-                severity=row["severity"],
-                read=False,
-                created_at=row["created_at"],
-                rule_id=row["rule_id"],
-            )
-            for row in rows
-        ]
-        unread_count = len(notifications)
+    )
+    unread_count = int(unread_result.scalar() or 0)
+    notifications = [_to_notification(alert) for alert in alerts]
 
     # Fetch pending invites dynamically for _user
     invitation_notifications = []
@@ -185,49 +141,22 @@ async def mark_notification_read(
                 target_org_id=str(p_org.id),
             )
 
-    has_read_at = await _alerts_have_read_at_column(db)
-
-    if has_read_at:
-        result = await db.execute(
-            select(Alert).where(
-                Alert.id == notification_id,
-                Alert.org_id == org.id,
-            )
-        )
-        alert = result.scalar_one_or_none()
-        if alert is None:
-            raise HTTPException(status_code=404, detail="Notification not found")
-
-        if alert.read_at is None:
-            alert.read_at = datetime.now(timezone.utc)
-            await db.commit()
-            await db.refresh(alert)
-
-        return _to_notification(alert)
-
     result = await db.execute(
-        text(
-            """
-            SELECT id, rule_id, severity, message, delivered_at, created_at
-            FROM alerts
-            WHERE id = :notification_id AND org_id = :org_id
-            """
-        ),
-        {"notification_id": notification_id, "org_id": org.id},
+        select(Alert).where(
+            Alert.id == notification_id,
+            Alert.org_id == org.id,
+        )
     )
-    row = result.mappings().one_or_none()
-    if row is None:
+    alert = result.scalar_one_or_none()
+    if alert is None:
         raise HTTPException(status_code=404, detail="Notification not found")
 
-    return NotificationResponse(
-        id=row["id"],
-        title=_notification_title(row["rule_id"]),
-        description=row["message"],
-        severity=row["severity"],
-        read=True,
-        created_at=row["created_at"],
-        rule_id=row["rule_id"],
-    )
+    if alert.read_at is None:
+        alert.read_at = datetime.now(timezone.utc)
+        await db.commit()
+        await db.refresh(alert)
+
+    return _to_notification(alert)
 
 
 @router.post("/read-all", response_model=NotificationActionResponse)
@@ -236,16 +165,15 @@ async def mark_all_notifications_read(
     _user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> NotificationActionResponse:
-    if await _alerts_have_read_at_column(db):
-        await db.execute(
-            update(Alert)
-            .where(
-                Alert.org_id == org.id,
-                Alert.read_at.is_(None),
-            )
-            .values(read_at=datetime.now(timezone.utc))
+    await db.execute(
+        update(Alert)
+        .where(
+            Alert.org_id == org.id,
+            Alert.read_at.is_(None),
         )
-        await db.commit()
+        .values(read_at=datetime.now(timezone.utc))
+    )
+    await db.commit()
     return NotificationActionResponse(status="ok")
 
 

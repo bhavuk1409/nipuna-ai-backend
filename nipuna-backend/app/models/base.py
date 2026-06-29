@@ -14,7 +14,7 @@ class UUIDPrimaryKeyMixin:
         PGUUID(as_uuid=True),
         primary_key=True,
         default=uuid.uuid4,
-        server_default=text("uuid_generate_v4()"),
+        server_default=text("gen_random_uuid()"),
     )
 
 
@@ -31,7 +31,7 @@ class UpdatedAtMixin:
         DateTime(timezone=True),
         nullable=False,
         server_default=func.now(),
-        server_onupdate=func.now(),
+        onupdate=func.now(),
     )
 
 

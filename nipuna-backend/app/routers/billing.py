@@ -126,6 +126,7 @@ async def cancel_subscription(
             sentry_sdk.capture_exception(exc)
 
     org.plan = "free"
+    db.add(org)
 
     event = BillingEvent(
         org_id=org.id,

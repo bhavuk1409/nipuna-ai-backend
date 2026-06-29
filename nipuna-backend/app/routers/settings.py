@@ -1,3 +1,9 @@
+import hmac
+import hashlib
+import logging
+import time
+import random
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,6 +24,7 @@ from app.utils.audit import log_action
 
 import httpx
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/settings", tags=["settings"])
 
 
@@ -229,13 +236,7 @@ async def delete_account(
     return {"status": "account deleted"}
 
 
-import hmac
-import hashlib
-import time
-import random
-import logging
 
-logger = logging.getLogger(__name__)
 
 
 @router.post("/request-email-code")
