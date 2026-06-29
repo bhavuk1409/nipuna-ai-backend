@@ -277,13 +277,37 @@ async def resolve_current_user(token: Optional[str], db: AsyncSession) -> User:
                 select(Organization).where(Organization.clerk_org_id == personal_clerk_id)
             )
             personal_org = org_result.scalar_one_or_none()
-            if personal_org:
-                if user.org_id != personal_org.id:
-                    user.org_id = personal_org.id
-                    db.add(user)
-                    await db.commit()
-                    await db.refresh(user)
-                    logger.info("Synchronized user %s org_id to personal workspace %s", user.email, personal_org.id)
+            if not personal_org:
+                # By default, create 1 workspace upon account setup
+                from app.models.settings import WorkspaceSettings, OrgPreferences
+                personal_org = Organization(
+                    clerk_org_id=personal_clerk_id,
+                    name=f"{user.first_name}'s Workspace" if user.first_name else "My Workspace",
+                    plan="free",
+                    seats_max=5,
+                    ai_credits=100,
+                )
+                db.add(personal_org)
+                await db.flush()
+
+                ws = WorkspaceSettings(org_id=personal_org.id, name=personal_org.name)
+                prefs = OrgPreferences(
+                    org_id=personal_org.id,
+                    approval_required=False,
+                    digest_time="09:00",
+                    escalation_window=24,
+                )
+                db.add(ws)
+                db.add(prefs)
+                await db.flush()
+                logger.info("Automatically created default workspace %s for user %s", personal_org.name, user.email)
+
+            if user.org_id != personal_org.id:
+                user.org_id = personal_org.id
+                db.add(user)
+                await db.commit()
+                await db.refresh(user)
+                logger.info("Synchronized user %s org_id to personal workspace %s", user.email, personal_org.id)
 
     return user
 
