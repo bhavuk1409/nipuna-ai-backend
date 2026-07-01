@@ -219,13 +219,17 @@ async def delete_account(
         raise HTTPException(status_code=400, detail="Confirmation string must match exactly")
 
     settings = get_settings()
-    async with httpx.AsyncClient() as client:
-        resp = await client.delete(
-            f"https://api.clerk.com/v1/users/{user.clerk_user_id}",
-            headers={"Authorization": f"Bearer {settings.clerk_secret_key}"},
-        )
-        if resp.status_code not in (200, 204):
-            raise HTTPException(status_code=500, detail="Failed to delete user from Clerk")
+    if settings.clerk_secret_key:
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.delete(
+                    f"https://api.clerk.com/v1/users/{user.clerk_user_id}",
+                    headers={"Authorization": f"Bearer {settings.clerk_secret_key}"},
+                )
+                if resp.status_code not in (200, 204, 404):
+                    logger.warning("Clerk API returned non-success code %s during user deletion", resp.status_code)
+        except Exception as exc:
+            logger.exception("Unexpected error during Clerk user deletion: %s", exc)
 
     await log_action(db, org_id=org.id, user_id=user.id,
                      action="account_deleted",
