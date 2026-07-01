@@ -155,8 +155,11 @@ async def create_onboarding(
     ws_result = await db.execute(
         select(WorkspaceSettings).where(WorkspaceSettings.org_id == org.id)
     )
-    if ws_result.scalar_one_or_none() is None:
+    ws = ws_result.scalar_one_or_none()
+    if ws is None:
         db.add(WorkspaceSettings(org_id=org.id, name=org.name))
+    else:
+        ws.name = org.name
 
     # ── 5. Ensure OrgPreferences row ───────────────────────────────────────
     prefs_result = await db.execute(
