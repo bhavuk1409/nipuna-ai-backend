@@ -40,7 +40,6 @@ def run_all_alert_checks() -> dict[str, int]:
                 alerts_created += _check_credit_low(session, org, r)
                 alerts_created += _check_agent_idle(session, org, r)
                 alerts_created += _check_integration_error(session, org, r)
-                alerts_created += _check_seat_limit(session, org, r)
                 alerts_created += _check_subscription_expiry(session, org, r)
             except Exception as exc:
                 logger.exception("Error checking org %s: %s", org.id, exc)
@@ -353,26 +352,6 @@ def _check_integration_error(session: Session, org: Organization, r) -> int:
     return count
 
 
-def _check_seat_limit(session: Session, org: Organization, r) -> int:
-    from sqlalchemy import func
-
-    seats_used = session.execute(
-        select(func.count(User.id)).where(
-            User.org_id == org.id,
-            User.status != "suspended",
-        )
-    ).scalar() or 0
-
-    if seats_used < org.seats_max:
-        return 0
-    if not _should_fire(str(org.id), "SEAT_LIMIT", r):
-        return 0
-
-    alert = Alert(org_id=org.id, rule_id="SEAT_LIMIT", severity="warning",
-                  message=f"Seat limit reached: {seats_used}/{org.seats_max}")
-    session.add(alert)
-    session.commit()
-    return 1
 
 
 def _check_subscription_expiry(session: Session, org: Organization, r) -> int:

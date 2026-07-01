@@ -9,7 +9,6 @@ from app.schemas.integration import (
     IntegrationConnectRequest,
 )
 from app.schemas.settings import WorkspaceResponse, WorkspaceUpdate, PreferencesResponse, PreferencesUpdate
-from app.schemas.team import MemberResponse, TeamResponse, InviteRequest
 
 __all__ = [
     "AgentCreate",
@@ -30,7 +29,4 @@ __all__ = [
     "WorkspaceUpdate",
     "PreferencesResponse",
     "PreferencesUpdate",
-    "MemberResponse",
-    "TeamResponse",
-    "InviteRequest",
 ]

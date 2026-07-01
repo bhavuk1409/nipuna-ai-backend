@@ -49,7 +49,7 @@ async def create_onboarding(
     if not clerk_user_id:
         raise HTTPException(status_code=401, detail="Invalid token claims")
 
-    # Enforce limit of 3 workspaces
+    # Enforce limit of 1 workspace
     settings = get_settings()
     if settings.clerk_secret_key:
         import httpx
@@ -60,10 +60,10 @@ async def create_onboarding(
             )
             if resp.status_code == 200:
                 memberships = resp.json().get("data", [])
-                if len(memberships) >= 3:
+                if len(memberships) >= 1:
                     raise HTTPException(
                         status_code=400,
-                        detail="You have reached the maximum limit of 3 workspaces.",
+                        detail="You have reached the maximum limit of 1 workspace.",
                     )
 
     # ── 1. Upsert the user row ──────────────────────────────────────────────
