@@ -212,7 +212,7 @@ async def resolve_current_user(token: Optional[str], db: AsyncSession) -> User:
                         first_name=first_name,
                         last_name=last_name,
                         status="active",
-                        role="member",
+                        role="admin",
                     )
                     bootstrap_db.add(user)
                     await bootstrap_db.commit()
@@ -244,6 +244,9 @@ async def resolve_current_user(token: Optional[str], db: AsyncSession) -> User:
             updated = True
         if clerk_last and not user.last_name:
             user.last_name = clerk_last
+            updated = True
+        if user.role != "admin":
+            user.role = "admin"
             updated = True
             
         if updated:
