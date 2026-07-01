@@ -261,12 +261,14 @@ async def _handle_user_deleted(db: AsyncSession, data: dict) -> None:
     if user:
         org_id = user.org_id
         if org_id:
-            await log_action(
-                db,
-                org_id,
-                "user.deleted",
-                user_id=user.id,
-                metadata={"clerk_user_id": clerk_user_id},
-            )
-        await db.delete(user)
-        logger.info("Deleted user clerk_user_id=%s", clerk_user_id)
+            # Delete the organization, which cascades to user and all workspace data
+            org_res = await db.execute(select(Organization).where(Organization.id == org_id))
+            org = org_res.scalar_one_or_none()
+            if org:
+                await db.delete(org)
+                logger.info("Deleted organization %s (and all cascaded data) because user %s was deleted", org_id, clerk_user_id)
+            else:
+                await db.delete(user)
+        else:
+            await db.delete(user)
+        logger.info("Successfully handled deletion for user clerk_user_id=%s", clerk_user_id)
