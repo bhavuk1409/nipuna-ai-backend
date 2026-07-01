@@ -271,4 +271,5 @@ async def _handle_user_deleted(db: AsyncSession, data: dict) -> None:
                 await db.delete(user)
         else:
             await db.delete(user)
-        logger.info("Successfully handled deletion for user clerk_user_id=%s", clerk_user_id)
+        await db.commit()
+        logger.info("Successfully handled deletion and committed changes for user clerk_user_id=%s", clerk_user_id)
