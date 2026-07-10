@@ -1,0 +1,198 @@
+/**
+ * Nipuna AI — Brand Overrides for n8n Workflow Engine
+ * 
+ * This file overrides n8n's default design tokens and visual elements
+ * to match the Nipuna AI brand identity.
+ * 
+ * Primary:   #316bf3 (Nipuna Blue)
+ * Secondary: #2eb48c (Nipuna Teal)
+ * Dark bg:   #080808
+ * Light bg:  #f7f7f5
+ */
+
+/* ─── Primary Brand Color Overrides ─────────────────────────────────────── */
+:root {
+  /* Replace n8n orange (#ff6d5a) with Nipuna blue */
+  --color--primary: #316bf3;
+  --color--primary--shade-1: #2557d6;
+  --color--primary--shade-2: #1e47c0;
+  --color--primary--tint-1: #5e8ef7;
+  --color--primary--tint-2: #8fb0fa;
+  --color--primary--tint-3: #cfe0fd;
+
+  /* Secondary accent — Nipuna teal */
+  --color--secondary: #2eb48c;
+
+  /* Sidebar */
+  --menu--color--background: #ffffff;
+  --menu--item--active--color--background: rgba(49, 107, 243, 0.08);
+
+  /* Workflow canvas toolbar */
+  --header--color--background: #ffffff;
+}
+
+/* Dark mode brand overrides */
+.dark-mode,
+.dark {
+  --color--primary: #316bf3;
+  --color--primary--shade-1: #2557d6;
+  --color--primary--tint-1: #5e8ef7;
+  --color--primary--tint-2: #8fb0fa;
+  --color--primary--tint-3: rgba(49, 107, 243, 0.15);
+  --color--secondary: #2eb48c;
+
+  --menu--color--background: #0f0f0f;
+  --header--color--background: #0f0f0f;
+  --color--background: #080808;
+  --color--background--light-1: #111111;
+  --color--background--light-2: #181818;
+  --color--background--light-3: #1f1f1f;
+}
+
+/* ─── Sidebar Header — Hide n8n Logo, Show Nipuna ────────────────────────── */
+/* Hide original n8n SVG logo image */
+.nipuna-logo-area img,
+a[class*="logo"] img,
+.logo img {
+  display: none !important;
+}
+
+/* Inject Nipuna AI wordmark using CSS pseudo-element */
+a[class*="logo"]::after {
+  content: "Nipuna AI";
+  display: block;
+  font-family: "Geist", "Inter", system-ui, sans-serif;
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  background: linear-gradient(135deg, #316bf3, #2eb48c);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  white-space: nowrap;
+}
+
+/* Sidebar "About n8n" → rebrand text */
+[data-test-id="settings-about-n8n"] span {
+  font-size: 0;
+}
+[data-test-id="settings-about-n8n"] span::after {
+  content: "About Nipuna AI";
+  font-size: 14px;
+}
+
+/* ─── Primary Button Color ───────────────────────────────────────────────── */
+.el-button--primary,
+.n8n-button--primary,
+button[class*="button--primary"] {
+  background-color: #316bf3 !important;
+  border-color: #316bf3 !important;
+}
+.el-button--primary:hover,
+button[class*="button--primary"]:hover {
+  background-color: #2557d6 !important;
+  border-color: #2557d6 !important;
+}
+
+/* ─── Active Navigation Item ─────────────────────────────────────────────── */
+.el-menu-item.is-active,
+[class*="menu-item"][aria-selected="true"],
+[class*="menuItem--active"],
+[class*="active"][class*="menu"] {
+  color: #316bf3 !important;
+  background-color: rgba(49, 107, 243, 0.08) !important;
+}
+
+/* ─── Workflow Canvas Node Color ─────────────────────────────────────────── */
+.node-box.selected,
+.vue-flow__node.selected .node-box {
+  border-color: #316bf3 !important;
+  box-shadow: 0 0 0 2px rgba(49, 107, 243, 0.25) !important;
+}
+
+/* Connection line selected color */
+.vue-flow__edge.selected path,
+.vue-flow__edge:hover path {
+  stroke: #316bf3 !important;
+}
+
+/* ─── Workflow editor header ─────────────────────────────────────────────── */
+#side-menu {
+  border-right-color: rgba(0, 0, 0, 0.08) !important;
+}
+
+.dark #side-menu,
+.dark-mode #side-menu {
+  border-right-color: rgba(255, 255, 255, 0.08) !important;
+}
+
+/* ─── Focus ring ─────────────────────────────────────────────────────────── */
+:focus-visible {
+  outline-color: #316bf3 !important;
+}
+
+/* ─── Checkbox / Toggle active ───────────────────────────────────────────── */
+.el-checkbox__input.is-checked .el-checkbox__inner,
+.el-switch.is-checked .el-switch__core {
+  background-color: #316bf3 !important;
+  border-color: #316bf3 !important;
+}
+
+/* ─── Link colors ────────────────────────────────────────────────────────── */
+a.n8n-link,
+a[class*="link--primary"] {
+  color: #316bf3 !important;
+}
+a.n8n-link:hover {
+  color: #2557d6 !important;
+}
+
+/* ─── Tag active / selected ──────────────────────────────────────────────── */
+.el-tag--primary {
+  background-color: rgba(49, 107, 243, 0.1) !important;
+  border-color: rgba(49, 107, 243, 0.3) !important;
+  color: #316bf3 !important;
+}
+
+/* ─── Progress bar ───────────────────────────────────────────────────────── */
+.el-progress-bar__inner {
+  background-color: #316bf3 !important;
+}
+
+/* ─── Breadcrumb active ──────────────────────────────────────────────────── */
+.el-breadcrumb__item:last-child .el-breadcrumb__inner {
+  color: #316bf3 !important;
+}
+
+/* ─── "n8n" text replacement in header breadcrumbs ──────────────────────── */
+/* Hide the "n8n" text used in some breadcrumbs or header items */
+[title="n8n"],
+[aria-label*="n8n"]:not([aria-label*="n8n.io"]) {
+  font-size: 0;
+}
+[title="n8n"]::after {
+  content: "Nipuna AI";
+  font-size: 14px;
+}
+
+/* ─── Execution status indicator ─────────────────────────────────────────── */
+[class*="status--running"],
+[class*="statusRunning"] {
+  color: #316bf3 !important;
+}
+
+/* ─── Hide n8n branding footer / upgrade banners ─────────────────────────── */
+[class*="cloud-cta"],
+[class*="upgrade-cta"],
+[data-test-id="free-trial-banner"],
+[data-test-id="nps-survey"],
+.n8n-info-tip[class*="upgrade"],
+a[href*="n8n.io/pricing"] {
+  display: none !important;
+}
+
+/* ─── Smooth transitions ─────────────────────────────────────────────────── */
+* {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}

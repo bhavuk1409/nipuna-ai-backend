@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from app.models.settings import OrgPreferences, WorkspaceSettings
     from app.models.user import User
     from app.models.vector_doc import VectorDocument
+    from app.models.workflow import Workflow
 
 organization_plan_enum = Enum(
     "free",
@@ -47,3 +48,4 @@ class Organization(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     org_preferences: Mapped["OrgPreferences | None"] = relationship(back_populates="organization", cascade="all, delete-orphan", uselist=False)
     audit_logs: Mapped[list["AuditLog"]] = relationship(back_populates="organization", cascade="all, delete-orphan")
     vector_documents: Mapped[list["VectorDocument"]] = relationship(back_populates="organization", cascade="all, delete-orphan")
+    workflows: Mapped[list["Workflow"]] = relationship(back_populates="organization", cascade="all, delete-orphan")

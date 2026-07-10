@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from app.routers import agents, auth, chat, dashboard, desktop, integrations, notifications, onboarding, settings
+from app.routers import agents, auth, chat, dashboard, desktop, integrations, notifications, onboarding, settings, workflows
 from app.routers.agent_socket import router as agent_socket_router
 
 api_router = APIRouter()
@@ -14,6 +14,7 @@ api_router.include_router(integrations.router)
 # api_router.include_router(billing.router)
 api_router.include_router(settings.router)
 api_router.include_router(notifications.router)
+api_router.include_router(workflows.router)
 # webhooks.router is disabled for now (handles Razorpay webhooks)
 # api_router.include_router(webhooks.router)
 api_router.include_router(agent_socket_router)

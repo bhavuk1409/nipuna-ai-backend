@@ -46,6 +46,9 @@ ENV_TO_FIELD = {
     "COMPOSIO_REDIRECT_URL": "composio_redirect_url",
     "TALLY_MCP_BASE_URL": "tally_mcp_base_url",
     "CORS_EXTRA_ORIGINS": "cors_extra_origins",
+    "N8N_BASE_URL": "n8n_base_url",
+    "N8N_API_KEY": "n8n_api_key",
+    "N8N_TIMEOUT_SECONDS": "n8n_timeout_seconds",
 }
 
 
@@ -98,6 +101,9 @@ class Settings(BaseSettings):
     composio_redirect_url: str | None = Field(default=None, alias="COMPOSIO_REDIRECT_URL")
     tally_mcp_base_url: str | None = Field(default=None, alias="TALLY_MCP_BASE_URL")
     cors_extra_origins: str = Field(default="", alias="CORS_EXTRA_ORIGINS")
+    n8n_base_url: str = Field(default="http://localhost:5678", alias="N8N_BASE_URL")
+    n8n_api_key: str | None = Field(default=None, alias="N8N_API_KEY")
+    n8n_timeout_seconds: float = Field(default=20.0, alias="N8N_TIMEOUT_SECONDS")
 
     @property
     def is_production(self) -> bool:

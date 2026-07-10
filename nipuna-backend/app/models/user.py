@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from app.models.audit import AuditLog
     from app.models.conversation import Conversation
     from app.models.organization import Organization
+    from app.models.workflow import Workflow
 
 user_role_enum = Enum("admin", "member", "viewer", name="user_role_enum")
 user_status_enum = Enum("active", "pending", "suspended", "declined", name="user_status_enum")
@@ -33,5 +34,6 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     organization: Mapped["Organization"] = relationship(back_populates="users")
     created_agents: Mapped[list["Agent"]] = relationship(back_populates="creator")
+    created_workflows: Mapped[list["Workflow"]] = relationship(back_populates="creator")
     conversations: Mapped[list["Conversation"]] = relationship(back_populates="user")
     audit_logs: Mapped[list["AuditLog"]] = relationship(back_populates="user")

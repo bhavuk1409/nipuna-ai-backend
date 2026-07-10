@@ -9,6 +9,7 @@ from app.models.organization import Organization
 from app.models.settings import OrgPreferences, WorkspaceSettings
 from app.models.user import User
 from app.models.vector_doc import VectorDocument
+from app.models.workflow import Workflow, WorkflowExecution
 
 __all__ = [
     "Agent",
@@ -24,5 +25,7 @@ __all__ = [
     "OrgPreferences",
     "User",
     "VectorDocument",
+    "Workflow",
+    "WorkflowExecution",
     "WorkspaceSettings",
 ]

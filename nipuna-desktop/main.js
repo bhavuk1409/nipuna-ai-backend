@@ -21,10 +21,11 @@ const state = {
   lastError: null,
 };
 
-let callbackServer = null;   // Local HTTP server for OAuth callback
-let agentWs = null;          // WebSocket to backend
-let mcpProcess = null;       // Child process for MCP server
-let clerkJwt = null;         // Stored Clerk JWT
+let callbackServer = null;      // Local HTTP server for OAuth callback
+let agentWs = null;             // WebSocket to backend
+let mcpProcess = null;          // Child process for MCP server
+let clerkJwt = null;            // Stored Clerk JWT
+let mcpInternalSecret = null;   // Shared secret for /internal/call (captured from MCP stdout)
 let tallyCheckInterval = null;
 let mcpReadyCheckInterval = null;
 
@@ -344,22 +345,24 @@ async function handleToolCall(msg) {
 
 function callLocalMcp(action, params) {
   return new Promise((resolve, reject) => {
-    const body = JSON.stringify({
-      jsonrpc: '2.0',
-      id: Date.now(),
-      method: 'tools/call',
-      params: { name: action, arguments: params || {} },
-    });
+    // Use the internal unauthenticated route — only accessible from this process
+    const body = JSON.stringify({ action, params: params || {} });
+
+    const headers = {
+      'Content-Type': 'application/json',
+      'Content-Length': Buffer.byteLength(body),
+    };
+    // Attach the internal secret if we have it (captured from MCP stdout at startup)
+    if (mcpInternalSecret) {
+      headers['x-internal-secret'] = mcpInternalSecret;
+    }
 
     const opts = {
       hostname: 'localhost',
       port: state.mcpServerPort,
-      path: '/mcp',
+      path: '/internal/call',
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Content-Length': Buffer.byteLength(body),
-      },
+      headers,
     };
 
     const req = http.request(opts, (res) => {
@@ -368,7 +371,7 @@ function callLocalMcp(action, params) {
       res.on('end', () => {
         try {
           const json = JSON.parse(data);
-          if (json.error) reject(new Error(json.error.message || 'MCP error'));
+          if (json.error) reject(new Error(json.error || 'MCP internal call error'));
           else resolve(json.result);
         } catch {
           reject(new Error('Invalid MCP response'));
@@ -388,7 +391,7 @@ function checkMcpServerReady() {
       {
         hostname: 'localhost',
         port: state.mcpServerPort,
-        path: '/.well-known/oauth-authorization-server',
+        path: '/health',
         method: 'GET',
       },
       (res) => {
@@ -454,19 +457,28 @@ function startMcpServer() {
   mcpProcess = spawn('node', [mcpServerScript], { env, cwd: mcpServerDir, stdio: 'pipe' });
 
   mcpProcess.stdout.on('data', (data) => {
-    const msg = data.toString().trim();
-    console.log('[MCP]', msg);
-    startMcpReadinessCheck();
+    const lines = data.toString().split('\n');
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      // Capture the internal secret emitted by the MCP server on startup
+      if (trimmed.startsWith('INTERNAL_SECRET=')) {
+        mcpInternalSecret = trimmed.slice('INTERNAL_SECRET='.length);
+        console.log('[MCP] Internal secret captured');
+      } else {
+        console.log('[MCP]', trimmed);
+      }
+    }
   });
 
   mcpProcess.stderr.on('data', (data) => {
     console.error('[MCP ERR]', data.toString().trim());
-    startMcpReadinessCheck();
   });
 
   mcpProcess.on('close', (code) => {
     console.log('MCP server exited with code', code);
     mcpProcess = null;
+    mcpInternalSecret = null;
     setState({ mcpRunning: false });
     if (mcpReadyCheckInterval) {
       clearInterval(mcpReadyCheckInterval);
@@ -483,6 +495,7 @@ function startMcpServer() {
     }
   });
 
+  // Start readiness polling ONCE here — not in stdout/stderr (avoids race condition)
   startMcpReadinessCheck();
 }
 
@@ -491,6 +504,7 @@ function stopMcpServer() {
     mcpProcess.kill();
     mcpProcess = null;
   }
+  mcpInternalSecret = null;
   if (mcpReadyCheckInterval) {
     clearInterval(mcpReadyCheckInterval);
     mcpReadyCheckInterval = null;
