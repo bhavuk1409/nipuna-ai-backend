@@ -143,6 +143,25 @@ function startCallbackServer() {
       font-size: 13px;
       line-height: 1.5;
     }
+    @media (prefers-color-scheme: dark) {
+      body {
+        background: #0c0c0e;
+        color: #f3f3f7;
+      }
+      .card {
+        background: #141416;
+        border-color: rgba(255, 255, 255, 0.06);
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15), 0 20px 48px -20px rgba(0,0,0,0.4);
+      }
+      .check-icon {
+        background: rgba(16, 185, 129, 0.12);
+        border-color: rgba(16, 185, 129, 0.2);
+        color: #34d399;
+      }
+      p {
+        color: #8e8e93;
+      }
+    }
   </style>
 </head>
 <body>

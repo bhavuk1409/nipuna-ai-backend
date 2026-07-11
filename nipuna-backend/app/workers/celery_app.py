@@ -20,6 +20,7 @@ celery_app = Celery(
     include=[
         "app.workers.alert_worker",
         "app.workers.sync_worker",
+        "app.workers.scheduler_task",
     ],
 )
 
@@ -33,6 +34,10 @@ celery_app.conf.update(
         "sync-all-integrations": {
             "task": "app.workers.sync_worker.sync_all_integrations",
             "schedule": 900.0,
+        },
+        "tick-workflow-scheduler": {
+            "task": "app.workers.scheduler_task.tick_scheduled_workflows",
+            "schedule": 60.0,
         },
     },
     task_serializer="json",
