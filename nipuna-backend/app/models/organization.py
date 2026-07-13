@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from app.models.billing import BillingEvent
     from app.models.conversation import Conversation
     from app.models.integration import Integration
+    from app.models.organization_member import OrganizationMember
     from app.models.settings import OrgPreferences, WorkspaceSettings
     from app.models.user import User
     from app.models.vector_doc import VectorDocument
@@ -36,8 +37,18 @@ class Organization(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     plan: Mapped[str] = mapped_column(organization_plan_enum, nullable=False, server_default="free")
     seats_max: Mapped[int] = mapped_column(Integer, nullable=False, server_default="5")
     ai_credits: Mapped[int] = mapped_column(Integer, nullable=False, server_default="100")
+    logo_url: Mapped[str | None] = mapped_column(String, nullable=True)
 
-    users: Mapped[list["User"]] = relationship(back_populates="organization", cascade="all, delete-orphan")
+    # Many-to-many with User through OrganizationMember. The cascade is
+    # `all, delete-orphan` at the SQLAlchemy level (deleting an org
+    # drops its memberships), and the DB FKs use ON DELETE CASCADE for
+    # belt-and-braces. We intentionally do NOT cascade to User here —
+    # deleting an org must not delete the people who were in it.
+    memberships: Mapped[list["OrganizationMember"]] = relationship(
+        back_populates="organization",
+        cascade="all, delete-orphan",
+    )
+
     agents: Mapped[list["Agent"]] = relationship(back_populates="organization", cascade="all, delete-orphan")
     conversations: Mapped[list["Conversation"]] = relationship(back_populates="organization", cascade="all, delete-orphan")
     integrations: Mapped[list["Integration"]] = relationship(back_populates="organization", cascade="all, delete-orphan")

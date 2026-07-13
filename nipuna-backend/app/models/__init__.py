@@ -5,7 +5,9 @@ from app.models.base import Base
 from app.models.billing import BillingEvent
 from app.models.conversation import Conversation, Message
 from app.models.integration import Integration
+from app.models.notification_read import NotificationRead
 from app.models.organization import Organization
+from app.models.organization_member import OrganizationMember
 from app.models.settings import OrgPreferences, WorkspaceSettings
 from app.models.user import User
 from app.models.vector_doc import VectorDocument
@@ -21,7 +23,9 @@ __all__ = [
     "Conversation",
     "Integration",
     "Message",
+    "NotificationRead",
     "Organization",
+    "OrganizationMember",
     "OrgPreferences",
     "User",
     "VectorDocument",

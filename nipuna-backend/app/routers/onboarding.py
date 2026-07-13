@@ -11,6 +11,7 @@ from app.core.jwks import get_jwks
 from app.database import get_db
 from app.dependencies import oauth2_scheme
 from app.models.organization import Organization
+from app.models.organization_member import OrganizationMember
 from app.models.settings import OrgPreferences, WorkspaceSettings
 from app.models.user import User
 from app.schemas.auth import OnboardingRequest, OnboardingResponse
@@ -60,10 +61,10 @@ async def create_onboarding(
             )
             if resp.status_code == 200:
                 memberships = resp.json().get("data", [])
-                if len(memberships) >= 1:
+                if len(memberships) >= 3:
                     raise HTTPException(
                         status_code=400,
-                        detail="You have reached the maximum limit of 1 workspace.",
+                        detail="You have reached the maximum limit of 3 workspaces.",
                     )
 
     # ── 1. Upsert the user row ──────────────────────────────────────────────
@@ -74,30 +75,46 @@ async def create_onboarding(
 
     if user is None:
         if body.email:
+            # Multi-org model: pending invites are rows in
+            # `organization_members` with `user_id IS NULL` and
+            # `status = "pending"`. We don't create a placeholder
+            # `User` row in onboarding anymore — the membership
+            # table is the source of truth. Find the first pending
+            # invite for this email and bind to it.
             pending_result = await db.execute(
-                select(User).where(
-                    User.email == body.email,
-                    User.status == "pending",
-                    User.clerk_user_id.like("invited_%")
+                select(OrganizationMember).where(
+                    OrganizationMember.email == body.email.lower(),
+                    OrganizationMember.status == "pending",
+                    OrganizationMember.user_id.is_(None),
+                ).order_by(OrganizationMember.created_at.asc())
+            )
+            pending_membership = pending_result.scalar_one_or_none()
+            if pending_membership is not None:
+                # Bind the new user to the existing pending membership.
+                user = User(
+                    clerk_user_id=clerk_user_id,
+                    email=body.email,
+                    first_name=body.first_name or "",
+                    last_name=body.last_name or "",
                 )
-            )
-            user = pending_result.scalar_one_or_none()
-            if user:
-                user.clerk_user_id = clerk_user_id
-                user.status = "active"
-                logger.info("Matched pending user invitation in onboarding for email %s", body.email)
-
-        if user is None:
-            user = User(
-                clerk_user_id=clerk_user_id,
-                email=body.email or "",
-                first_name=body.first_name or "",
-                last_name=body.last_name or "",
-                status="active",
-                role="admin",
-            )
-            db.add(user)
-            await db.flush()  # gets user.id without committing
+                db.add(user)
+                await db.flush()  # populate user.id before binding membership
+                pending_membership.user_id = user.id
+                pending_membership.status = "active"
+                user.active_org_id = pending_membership.org_id
+                logger.info(
+                    "Linked onboarding user %s to pending membership in org %s",
+                    body.email, pending_membership.org_id,
+                )
+            else:
+                user = User(
+                    clerk_user_id=clerk_user_id,
+                    email=body.email or "",
+                    first_name=body.first_name or "",
+                    last_name=body.last_name or "",
+                )
+                db.add(user)
+                await db.flush()  # gets user.id without committing
 
     # ── 2. Find or create the org ───────────────────────────────────────────
     org: Organization | None = None
@@ -109,10 +126,12 @@ async def create_onboarding(
         )
         org = org_result.scalar_one_or_none()
 
-    # Try by user's existing org_id
-    if org is None and user.org_id is not None:
+    # Try by user's existing `active_org_id` (the new pointer column).
+    # We don't read the legacy `User.org_id` anymore — it was dropped
+    # in step 8.
+    if org is None and user.active_org_id is not None:
         org_result = await db.execute(
-            select(Organization).where(Organization.id == user.org_id)
+            select(Organization).where(Organization.id == user.active_org_id)
         )
         org = org_result.scalar_one_or_none()
 
@@ -133,23 +152,33 @@ async def create_onboarding(
     # Always update the org name from the form
     org.name = body.company_name
 
-    # ── 3. Link user → org ─────────────────────────────────────────────────
-    if user.org_id is None:
-        user.org_id = org.id
-        user.role = "admin"
-    elif user.org_id == org.id:
-        # Existing link — ensure the creator is always admin for their own org
-        # (only elevate, never demote an already-admin user)
-        if user.role not in ("admin",):
-            pass  # keep their existing role for invited users
-    else:
-        # User is switching to a different org context — update the link
-        user.org_id = org.id
-        user.role = "admin"
+    # ── 3. Link user → org via OrganizationMember ───────────────────────
+    # Multi-org model: membership is the source of truth. We need
+    # an active `OrganizationMember(user, org, role="admin")` row.
+    # If the user already has an active membership in this org, we
+    # keep it. If not, we add one.
+    existing_membership = (await db.execute(
+        select(OrganizationMember).where(
+            OrganizationMember.user_id == user.id,
+            OrganizationMember.org_id == org.id,
+        )
+    )).scalar_one_or_none()
 
-    # Ensure user is active after completing onboarding
-    if user.status == "pending":
-        user.status = "active"
+    if existing_membership is None:
+        new_membership = OrganizationMember(
+            user_id=user.id,
+            org_id=org.id,
+            email=user.email.lower(),
+            role="admin",
+            status="active",
+        )
+        db.add(new_membership)
+
+    # Set the user's `active_org_id` (the new pointer column).
+    # The legacy `User.org_id` / `User.role` / `User.status` columns
+    # were dropped in step 8 — the membership row is the source of
+    # truth.
+    user.active_org_id = org.id
 
     # ── 4. Ensure WorkspaceSettings row ────────────────────────────────────
     ws_result = await db.execute(

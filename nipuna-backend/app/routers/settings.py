@@ -119,15 +119,22 @@ async def delete_workspace(
             detail="Only workspace administrators can delete this workspace"
         )
 
-    # Safety: nullify org_id for all users linked to this organization
-    # They must be re-assigned to another workspace on the frontend after deletion
+    # Safety: detach all users from the deleted org. The membership
+    # table will be cleaned up by the FK ON DELETE CASCADE on
+    # `organization_members.org_id`, but we also need to clear the
+    # `User.active_org_id` pointer for users who had this org as
+    # their active. The dep will lazy-pick a new active org from
+    # the user's other memberships on their next request.
     users_result = await db.execute(
-        select(User).where(User.org_id == org.id)
+        select(User).where(User.active_org_id == org.id)
     )
     active_users = users_result.scalars().all()
 
     for u in active_users:
-        # Detach user from the deleted org; the frontend will redirect them
+        u.active_org_id = None
+        # Legacy column — same intent. If the user has no other
+        # active memberships, the dep will set this up again on
+        # the next request.
         u.org_id = None
         db.add(u)
 
@@ -234,8 +241,34 @@ async def delete_account(
     await log_action(db, org_id=org.id, user_id=user.id,
                      action="account_deleted",
                      metadata={"org_id": str(org.id)})
-    await db.delete(org)
+    # Multi-org semantics: deleting the user deletes only the user
+    # row. The FK `organization_members.user_id` ON DELETE CASCADE
+    # cleans up the user's memberships; the org persists if other
+    # members remain. If this user was the org's sole admin, the
+    # org becomes admin-less — the next org owner must promote
+    # another member manually. (We log a warning so it's visible.)
+    from sqlalchemy import func as sql_func
+    from app.models.organization_member import OrganizationMember
+    other_admin_count = (await db.execute(
+        select(sql_func.count())
+        .select_from(OrganizationMember)
+        .where(
+            OrganizationMember.org_id == org.id,
+            OrganizationMember.role == "admin",
+            OrganizationMember.status == "active",
+            OrganizationMember.user_id != user.id,
+        )
+    )).scalar_one()
+    if other_admin_count == 0:
+        logger.warning(
+            "User %s was the only admin in org %s; org now has zero admins.",
+            user.id, org.id,
+        )
+
+    user_id_to_delete = user.id
+    await db.delete(user)
     await db.commit()
+    # Cascade may have nulled the FK to this user; no further work.
 
     return {"status": "account deleted"}
 

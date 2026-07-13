@@ -185,8 +185,6 @@ async def test_run_chat_pipeline_with_tool_calling(mock_execute_tool, mock_llm_c
         email="test@example.com",
         first_name="Test",
         last_name="User",
-        role="member",
-        status="active"
     )
     db_session.add(user)
     await db_session.flush()
@@ -342,8 +340,6 @@ async def test_run_langgraph_pipeline_new_arguments(mock_ainvoke, db_session):
         email="test@example.com",
         first_name="Test",
         last_name="User",
-        role="member",
-        status="active"
     )
     db_session.add(user)
     await db_session.flush()

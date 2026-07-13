@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.config import get_settings
 from app.models.alert import Alert
 from app.models.organization import Organization
+from app.models.organization_member import OrganizationMember
 from app.models.user import User
 from app.workers.celery_app import celery_app
 
@@ -14,6 +15,33 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 sync_engine = create_engine(settings.sync_database_url)
 SyncSessionLocal = sessionmaker(bind=sync_engine)
+
+
+def _find_org_admin(session: Session, org_id) -> User | None:
+    """Find an active admin in this org via the membership table.
+
+    Multi-org model: `User.role` is the legacy single-org column. The
+    `OrganizationMember.role` row is the source of truth. We pick the
+    oldest active admin in the org (tie-break: lowest `id`) so the
+    alert email goes to a stable recipient.
+
+    Falls back to the legacy `User.org_id` / `User.role` query if no
+    membership row exists yet (this can happen for users created
+    during the migration window before the dep seeded the row).
+    """
+    admin_user_id = session.execute(
+        select(OrganizationMember.user_id).where(
+            OrganizationMember.org_id == org_id,
+            OrganizationMember.role == "admin",
+            OrganizationMember.status == "active",
+        ).order_by(OrganizationMember.created_at.asc(), OrganizationMember.id.asc()).limit(1)
+    ).scalar_one_or_none()
+    if admin_user_id is not None:
+        return session.get(User, admin_user_id)
+    # Legacy fallback during the migration window.
+    return session.execute(
+        select(User).where(User.org_id == org_id, User.role == "admin")
+    ).scalar_one_or_none()
 
 
 def _get_redis():
@@ -76,9 +104,7 @@ def _check_credit_low(session: Session, org: Organization, r) -> int:
     session.add(alert)
     session.commit()
 
-    admin = session.execute(
-        select(User).where(User.org_id == org.id, User.role == "admin")
-    ).scalar_one_or_none()
+    admin = _find_org_admin(session, org.id)
     if admin:
         email_html = f"""<!doctype html>
 <html>

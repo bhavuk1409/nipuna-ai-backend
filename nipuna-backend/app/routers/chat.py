@@ -32,9 +32,25 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/chat", tags=["chat"])
 
 
-def require_chat_permission(user: User = Depends(get_current_user)) -> User:
-    """Viewers cannot send chat messages — only admin and member roles can."""
-    if user.role == "viewer":
+async def require_chat_permission(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> User:
+    """Viewers cannot send chat messages — only admin and member roles can.
+
+    Reads the role from the active `OrganizationMember` row (the
+    multi-org source of truth).
+    """
+    from app.models.organization_member import OrganizationMember
+    res = await db.execute(
+        select(OrganizationMember.role).where(
+            OrganizationMember.user_id == user.id,
+            OrganizationMember.org_id == user.active_org_id,
+            OrganizationMember.status == "active",
+        )
+    )
+    role = res.scalar_one_or_none() or "viewer"
+    if role == "viewer":
         raise HTTPException(
             status_code=403,
             detail="Viewers have read-only access and cannot use the AI chat."

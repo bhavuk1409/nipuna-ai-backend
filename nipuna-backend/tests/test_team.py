@@ -1,13 +1,26 @@
+"""Tests for the team router (multi-org model).
+
+The previous version of this file tested the *old* placeholder-User
+invite pattern (`clerk_user_id="invited_*"`, `User.org_id` set on a
+placeholder). The new model uses `OrganizationMember` rows, so the
+fixtures and assertions here use that table. The endpoint surface
+also changed slightly (the path for invites is now `/team/invites/...`
+singular, not `/team/invitations/...`).
+"""
+
+import uuid
+from unittest.mock import AsyncMock, patch
+
 import pytest
-from unittest.mock import patch, AsyncMock
+import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 
 from app.database import AsyncSessionLocal
 from app.main import app
-from app.models.user import User
 from app.models.organization import Organization
-import pytest_asyncio
+from app.models.organization_member import OrganizationMember
+from app.models.user import User
 
 
 @pytest.fixture
@@ -18,10 +31,12 @@ def client():
 
 @pytest_asyncio.fixture
 async def setup_test_org_and_admin():
+    """Create a test org with an admin user, an active membership, and
+    the dev-bypass token decoding setup. The admin's `active_org_id`
+    is set so `get_current_org` lands on the test org."""
     async with AsyncSessionLocal() as session:
-        # Create organization
         org = Organization(
-            clerk_org_id="test_org_clerk_id",
+            clerk_org_id=f"test_org_clerk_id_{uuid.uuid4()}",
             name="Test Org",
             plan="free",
             seats_max=5,
@@ -30,25 +45,36 @@ async def setup_test_org_and_admin():
         session.add(org)
         await session.flush()
 
-        # Create admin user
         admin = User(
-            clerk_user_id="test_admin_clerk_id",
-            org_id=org.id,
+            clerk_user_id=f"test_admin_clerk_id_{uuid.uuid4()}",
+            active_org_id=org.id,
             email="admin@example.com",
             first_name="Admin",
             last_name="User",
+        )
+        session.add(admin)
+        await session.flush()
+
+        # Multi-org model: a User only "belongs" to an org via an
+        # active `OrganizationMember` row. Add one for the admin so
+        # `require_admin` (which reads the membership table) is happy.
+        admin_membership = OrganizationMember(
+            user_id=admin.id,
+            org_id=org.id,
+            email=admin.email.lower(),
             role="admin",
             status="active",
         )
-        session.add(admin)
+        session.add(admin_membership)
         await session.commit()
         await session.refresh(org)
         await session.refresh(admin)
 
     yield org, admin
 
-    # Clean up after test
+    # Clean up after test.
     async with AsyncSessionLocal() as session:
+        await session.execute(OrganizationMember.__table__.delete())
         await session.execute(User.__table__.delete())
         await session.execute(Organization.__table__.delete())
         await session.commit()
@@ -57,368 +83,309 @@ async def setup_test_org_and_admin():
 @pytest.mark.asyncio
 @patch("app.dependencies.get_jwks")
 @patch("jose.jwt.decode")
-@patch("app.services.notifications.email.send_email", new_callable=AsyncMock)
-async def test_invite_member(mock_send_email, mock_jwt_decode, mock_get_jwks, client, setup_test_org_and_admin):
+@patch("app.routers.team.send_clerk_org_invitation", new_callable=AsyncMock)
+@patch("app.routers.team.lookup_clerk_user_by_email", new_callable=AsyncMock)
+async def test_invite_member(
+    mock_lookup, mock_send_clerk, mock_jwt_decode, mock_get_jwks,
+    client, setup_test_org_and_admin,
+):
+    """Inviting a brand-new email creates a pending OrganizationMember."""
     org, admin = setup_test_org_and_admin
     mock_get_jwks.return_value = {}
     mock_jwt_decode.return_value = {
-        "sub": "test_admin_clerk_id",
-        "org_id": "test_org_clerk_id",
+        "sub": admin.clerk_user_id,
+        "email": admin.email,
         "iss": "https://elegant-locust-4.clerk.accounts.dev",
     }
+    # New email that is not a Clerk user yet.
+    mock_lookup.return_value = None
 
-    # Invite a member
     async with client as ac:
         response = await ac.post(
-            "/api/v1/team/invite",
+            "/api/v1/team/invites",
             json={"email": "invitee@example.com", "role": "member"},
             headers={"Authorization": "Bearer fake_token"},
         )
-    assert response.status_code == 200
-    assert response.json()["status"] == "invitation_sent"
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["email"] == "invitee@example.com"
+    assert body["role"] == "member"
 
-    # Verify that a pending user record was created in the database
+    # Verify that a pending membership row was created in the database
+    # with `user_id IS NULL` (placeholder for a future user).
     async with AsyncSessionLocal() as session:
         result = await session.execute(
-            select(User).where(User.email == "invitee@example.com")
+            select(OrganizationMember).where(
+                OrganizationMember.email == "invitee@example.com",
+                OrganizationMember.org_id == org.id,
+            )
         )
-        user = result.scalar_one_or_none()
-        assert user is not None
-        assert user.status == "pending"
-        assert user.role == "member"
-        assert user.org_id == org.id
+        membership = result.scalar_one_or_none()
+        assert membership is not None
+        assert membership.status == "pending"
+        assert membership.role == "member"
+        assert membership.user_id is None
 
 
 @pytest.mark.asyncio
 @patch("app.dependencies.get_jwks")
 @patch("jose.jwt.decode")
-async def test_accept_invitation(mock_jwt_decode, mock_get_jwks, client, setup_test_org_and_admin):
+async def test_accept_invitation(
+    mock_jwt_decode, mock_get_jwks, client, setup_test_org_and_admin,
+):
+    """An invitee can accept a pending invite. The new endpoint
+    requires the user to be authenticated; the invite is found by
+    (org_id, current_user.email)."""
     org, admin = setup_test_org_and_admin
+    invitee_email = "invitee@example.com"
 
-    # Pre-create a pending user
+    # Pre-create a pending membership in the same org for the
+    # invitee. The invitee has no User row yet (placeholder).
     async with AsyncSessionLocal() as session:
-        invited_user = User(
-            clerk_user_id="test_invitee_clerk_id",
+        pending = OrganizationMember(
+            user_id=None,
             org_id=org.id,
-            email="invitee@example.com",
-            first_name="Invited",
-            last_name="User",
+            email=invitee_email,
             role="member",
             status="pending",
         )
-        session.add(invited_user)
+        session.add(pending)
         await session.commit()
-        await session.refresh(invited_user)
-        invited_user_id = invited_user.id
+        await session.refresh(pending)
+        pending_id = pending.id
+
+    # Pre-create the invitee as a real User (so /auth/me can return
+    # them). In a real flow this is the Clerk user who just signed
+    # in; in tests we create the row directly.
+    async with AsyncSessionLocal() as session:
+        invitee = User(
+            clerk_user_id=f"test_invitee_clerk_id_{uuid.uuid4()}",
+            email=invitee_email,
+            first_name="Invited",
+            last_name="User",
+        )
+        session.add(invitee)
+        await session.commit()
+        await session.refresh(invitee)
 
     mock_get_jwks.return_value = {}
     mock_jwt_decode.return_value = {
-        "sub": "test_invitee_clerk_id",
-        "org_id": "test_org_clerk_id",
+        "sub": invitee.clerk_user_id,
+        "email": invitee.email,
         "iss": "https://elegant-locust-4.clerk.accounts.dev",
     }
 
-    # Call /team/accept
     async with client as ac:
         response = await ac.post(
             "/api/v1/team/accept",
+            json={"org_id": str(org.id)},
             headers={"Authorization": "Bearer fake_token"},
         )
-    assert response.status_code == 200
-    assert response.json()["status"] == "success"
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["email"] == invitee_email
+    assert body["status"] == "active"
 
-    # Verify status changed to active
+    # Verify the membership row is now active and bound to the user.
     async with AsyncSessionLocal() as session:
         result = await session.execute(
-            select(User).where(User.id == invited_user_id)
+            select(OrganizationMember).where(OrganizationMember.id == pending_id)
         )
-        user = result.scalar_one()
-        assert user.status == "active"
+        m = result.scalar_one()
+        assert m.status == "active"
+        assert m.user_id == invitee.id
 
 
 @pytest.mark.asyncio
 @patch("app.dependencies.get_jwks")
 @patch("jose.jwt.decode")
-async def test_decline_invitation(mock_jwt_decode, mock_get_jwks, client, setup_test_org_and_admin):
+async def test_decline_invitation(
+    mock_jwt_decode, mock_get_jwks, client, setup_test_org_and_admin,
+):
+    """Declining an invite flips status to `declined` and keeps the row."""
     org, admin = setup_test_org_and_admin
+    invitee_email = "invitee2@example.com"
 
-    # Pre-create a pending user
     async with AsyncSessionLocal() as session:
-        invited_user = User(
-            clerk_user_id="test_invitee_clerk_id2",
-            org_id=org.id,
-            email="invitee2@example.com",
+        invitee = User(
+            clerk_user_id=f"test_invitee_clerk_id2_{uuid.uuid4()}",
+            email=invitee_email,
             first_name="Invited2",
             last_name="User",
+        )
+        session.add(invitee)
+        await session.flush()
+
+        pending = OrganizationMember(
+            user_id=None,
+            org_id=org.id,
+            email=invitee_email,
             role="member",
             status="pending",
         )
-        session.add(invited_user)
+        session.add(pending)
         await session.commit()
-        await session.refresh(invited_user)
-        invited_user_id = invited_user.id
+        await session.refresh(pending)
+        pending_id = pending.id
 
     mock_get_jwks.return_value = {}
     mock_jwt_decode.return_value = {
-        "sub": "test_invitee_clerk_id2",
-        "org_id": "test_org_clerk_id",
+        "sub": invitee.clerk_user_id,
+        "email": invitee.email,
         "iss": "https://elegant-locust-4.clerk.accounts.dev",
     }
 
-    # Call /team/decline
     async with client as ac:
         response = await ac.post(
             "/api/v1/team/decline",
+            json={"org_id": str(org.id)},
             headers={"Authorization": "Bearer fake_token"},
         )
-    assert response.status_code == 200
-    assert response.json()["status"] == "success"
+    assert response.status_code == 204, response.text
 
-    # Verify status changed to declined and org_id remains
+    # The membership row is now marked `declined`. We preserve the
+    # row (rather than deleting) so there's an audit trail of who
+    # declined what.
     async with AsyncSessionLocal() as session:
         result = await session.execute(
-            select(User).where(User.id == invited_user_id)
+            select(OrganizationMember).where(OrganizationMember.id == pending_id)
         )
-        user = result.scalar_one()
-        assert user.status == "declined"
-        assert user.org_id == org.id
-
-
-@pytest.mark.asyncio
-async def test_public_decline_invitation(client, setup_test_org_and_admin):
-    org, admin = setup_test_org_and_admin
-
-    # Pre-create a pending user
-    async with AsyncSessionLocal() as session:
-        invited_user = User(
-            clerk_user_id="invited_public_decline_token",
-            org_id=org.id,
-            email="invitee_public@example.com",
-            first_name="",
-            last_name="",
-            role="member",
-            status="pending",
-        )
-        session.add(invited_user)
-        await session.commit()
-
-    # Call public decline endpoint
-    async with client as ac:
-        response = await ac.post(
-            f"/api/v1/team/public-decline?email=invitee_public@example.com&org_id={org.id}",
-        )
-    assert response.status_code == 200
-    assert response.json()["status"] == "success"
-
-    # Verify status changed to declined and org_id remains
-    async with AsyncSessionLocal() as session:
-        result = await session.execute(
-            select(User).where(User.email == "invitee_public@example.com")
-        )
-        user = result.scalar_one()
-        assert user.status == "declined"
-        assert user.org_id == org.id
+        m = result.scalar_one_or_none()
+        assert m is not None
+        assert m.status == "declined"
 
 
 @pytest.mark.asyncio
 @patch("app.dependencies.get_jwks")
 @patch("jose.jwt.decode")
-async def test_remove_member_by_admin(mock_jwt_decode, mock_get_jwks, client, setup_test_org_and_admin):
+async def test_remove_member_by_admin(
+    mock_jwt_decode, mock_get_jwks, client, setup_test_org_and_admin,
+):
+    """An admin can remove an active member. The membership row is
+    deleted; the user's `active_org_id` is cleared if it pointed at
+    the removed org."""
     org, admin = setup_test_org_and_admin
 
-    # Pre-create an active user
+    # Pre-create an active member with both legacy and new columns set.
     async with AsyncSessionLocal() as session:
         active_user = User(
-            clerk_user_id="test_active_user_clerk_id",
-            org_id=org.id,
+            clerk_user_id=f"test_active_user_clerk_id_{uuid.uuid4()}",
+            active_org_id=org.id,
             email="active_user@example.com",
             first_name="Active",
             last_name="User",
-            role="member",
-            status="active",
         )
         session.add(active_user)
-        await session.commit()
-        await session.refresh(active_user)
-        active_user_id = active_user.id
+        await session.flush()
 
-    mock_get_jwks.return_value = {}
-    mock_jwt_decode.return_value = {
-        "sub": "test_admin_clerk_id",
-        "org_id": "test_org_clerk_id",
-        "iss": "https://elegant-locust-4.clerk.accounts.dev",
-    }
-
-    # Call DELETE /team/members/{member_id}
-    async with client as ac:
-        response = await ac.delete(
-            f"/api/v1/team/members/{active_user_id}",
-            headers={"Authorization": "Bearer fake_token"},
-        )
-    assert response.status_code == 200
-    assert response.json()["status"] == "success"
-
-    # Verify status changed to suspended and org_id cleared
-    async with AsyncSessionLocal() as session:
-        result = await session.execute(
-            select(User).where(User.id == active_user_id)
-        )
-        user = result.scalar_one()
-        assert user.status == "suspended"
-        assert user.org_id is None
-
-
-@pytest.mark.asyncio
-@patch("app.dependencies.get_jwks")
-@patch("jose.jwt.decode")
-async def test_cancel_invitation_by_admin(mock_jwt_decode, mock_get_jwks, client, setup_test_org_and_admin):
-    org, admin = setup_test_org_and_admin
-
-    # Pre-create a pending user
-    async with AsyncSessionLocal() as session:
-        invited_user = User(
-            clerk_user_id="invited_cancel_token",
+        membership = OrganizationMember(
+            user_id=active_user.id,
             org_id=org.id,
-            email="invitee_cancel@example.com",
-            first_name="",
-            last_name="",
-            role="member",
-            status="pending",
-        )
-        session.add(invited_user)
-        await session.commit()
-        await session.refresh(invited_user)
-        invited_user_id = invited_user.id
-
-    mock_get_jwks.return_value = {}
-    mock_jwt_decode.return_value = {
-        "sub": "test_admin_clerk_id",
-        "org_id": "test_org_clerk_id",
-        "iss": "https://elegant-locust-4.clerk.accounts.dev",
-    }
-
-    # Call DELETE /team/invitations/{member_id}
-    async with client as ac:
-        response = await ac.delete(
-            f"/api/v1/team/invitations/{invited_user_id}",
-            headers={"Authorization": "Bearer fake_token"},
-        )
-    assert response.status_code == 200
-    assert response.json()["status"] == "success"
-
-    # Verify user record is deleted
-    async with AsyncSessionLocal() as session:
-        result = await session.execute(
-            select(User).where(User.id == invited_user_id)
-        )
-        user = result.scalar_one_or_none()
-        assert user is None
-
-
-@pytest.mark.asyncio
-@patch("app.dependencies.get_jwks")
-@patch("jose.jwt.decode")
-async def test_existing_user_invitation_migration(mock_jwt_decode, mock_get_jwks, client, setup_test_org_and_admin):
-    org_a, admin = setup_test_org_and_admin
-    
-    # Create another org (Org B)
-    async with AsyncSessionLocal() as session:
-        org_b = Organization(
-            name="Org B",
-            seats_max=5,
-            clerk_org_id="manual_org_b",
-        )
-        session.add(org_b)
-        await session.commit()
-        await session.refresh(org_b)
-        org_b_id = org_b.id
-
-        # Create an existing active user in Org A
-        existing_user = User(
-            clerk_user_id="existing_user_clerk_id",
-            org_id=org_a.id,
-            email="existing_user@example.com",
-            first_name="John",
-            last_name="Doe",
+            email=active_user.email,
             role="member",
             status="active",
         )
-        session.add(existing_user)
-
-        # Create a pending invitation for this same user's email under Org B
-        pending_invite = User(
-            clerk_user_id="invited_temp_id_123",
-            org_id=org_b_id,
-            email="existing_user@example.com",
-            first_name="",
-            last_name="",
-            role="admin",
-            status="pending",
-        )
-        session.add(pending_invite)
+        session.add(membership)
         await session.commit()
+        await session.refresh(active_user)
+        await session.refresh(membership)
+        member_id = membership.id
 
     mock_get_jwks.return_value = {}
-    # Log in as the existing user switching to Org B
     mock_jwt_decode.return_value = {
-        "sub": "existing_user_clerk_id",
-        "email": "existing_user@example.com",
-        "org_id": "manual_org_b",
+        "sub": admin.clerk_user_id,
+        "email": admin.email,
         "iss": "https://elegant-locust-4.clerk.accounts.dev",
     }
 
-    # Calling any authenticated endpoint triggers get_current_user token bootstrap resolver
     async with client as ac:
-        response = await ac.get(
-            "/api/v1/auth/me",
+        response = await ac.delete(
+            f"/api/v1/team/members/{member_id}",
             headers={"Authorization": "Bearer fake_token"},
         )
-    assert response.status_code == 200
-    user_data = response.json()
-    assert user_data["status"] == "pending"
-    assert user_data["role"] == "admin"
-    
-    # Verify DB state
-    async with AsyncSessionLocal() as session:
-        # The temporary invitation record should be deleted
-        temp_check = await session.execute(
-            select(User).where(User.clerk_user_id == "invited_temp_id_123")
-        )
-        assert temp_check.scalar_one_or_none() is None
+    assert response.status_code == 204, response.text
 
-        # The existing user record should be updated
-        user_check = await session.execute(
-            select(User).where(User.clerk_user_id == "existing_user_clerk_id")
+    # The membership row is gone; the user's `active_org_id` is
+    # cleared (so the dep will lazy-pick a new active org on next
+    # request).
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(OrganizationMember).where(OrganizationMember.id == member_id)
         )
-        db_user = user_check.scalar_one_or_none()
-        assert db_user is not None
-        assert db_user.org_id == org_b_id
-        assert db_user.status == "pending"
-        assert db_user.role == "admin"
+        assert result.scalar_one_or_none() is None
+
+        u = await session.get(User, active_user.id)
+        assert u is not None
+        assert u.active_org_id is None
 
 
 @pytest.mark.asyncio
 @patch("app.dependencies.get_jwks")
 @patch("jose.jwt.decode")
-@patch("app.routers.team.send_email", new_callable=AsyncMock)
-async def test_resend_invitation(mock_send_email, mock_jwt_decode, mock_get_jwks, client, setup_test_org_and_admin):
+async def test_cancel_invitation_by_admin(
+    mock_jwt_decode, mock_get_jwks, client, setup_test_org_and_admin,
+):
+    """An admin can cancel a pending invite. The membership row is deleted."""
     org, admin = setup_test_org_and_admin
 
-    # Create a pending invitation
     async with AsyncSessionLocal() as session:
-        pending_user = User(
-            clerk_user_id="invited_pending_resend_id",
+        invite = OrganizationMember(
+            user_id=None,
             org_id=org.id,
-            email="resend_invitee@example.com",
-            first_name="",
-            last_name="",
+            email="invitee_cancel@example.com",
             role="member",
             status="pending",
         )
-        session.add(pending_user)
+        session.add(invite)
         await session.commit()
-        await session.refresh(pending_user)
-        pending_user_id = pending_user.id
+        await session.refresh(invite)
+        invite_id = invite.id
+
+    mock_get_jwks.return_value = {}
+    mock_jwt_decode.return_value = {
+        "sub": admin.clerk_user_id,
+        "email": admin.email,
+        "iss": "https://elegant-locust-4.clerk.accounts.dev",
+    }
+
+    async with client as ac:
+        response = await ac.delete(
+            f"/api/v1/team/invites/{invite_id}",
+            headers={"Authorization": "Bearer fake_token"},
+        )
+    assert response.status_code == 204, response.text
+
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(OrganizationMember).where(OrganizationMember.id == invite_id)
+        )
+        assert result.scalar_one_or_none() is None
+
+
+@pytest.mark.asyncio
+@patch("app.dependencies.get_jwks")
+@patch("jose.jwt.decode")
+@patch("app.routers.team.send_clerk_org_invitation", new_callable=AsyncMock)
+async def test_resend_invitation(
+    mock_send_clerk, mock_jwt_decode, mock_get_jwks,
+    client, setup_test_org_and_admin,
+):
+    """Resending a pending invite re-fires the Clerk email (or returns
+    a dev share link)."""
+    org, admin = setup_test_org_and_admin
+
+    async with AsyncSessionLocal() as session:
+        invite = OrganizationMember(
+            user_id=None,
+            org_id=org.id,
+            email="resend_invitee@example.com",
+            role="member",
+            status="pending",
+        )
+        session.add(invite)
+        await session.commit()
+        await session.refresh(invite)
+        invite_id = invite.id
 
     mock_get_jwks.return_value = {}
     mock_jwt_decode.return_value = {
@@ -429,35 +396,46 @@ async def test_resend_invitation(mock_send_email, mock_jwt_decode, mock_get_jwks
 
     async with client as ac:
         response = await ac.post(
-            f"/api/v1/team/invitations/{pending_user_id}/resend",
+            f"/api/v1/team/invites/{invite_id}/resend",
             headers={"Authorization": "Bearer fake_token"},
         )
-    assert response.status_code == 200
-    assert response.json()["status"] == "success"
-    mock_send_email.assert_called_once()
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["email"] == "resend_invitee@example.com"
+    mock_send_clerk.assert_called_once()
 
 
 @pytest.mark.asyncio
 @patch("app.dependencies.get_jwks")
 @patch("jose.jwt.decode")
-async def test_change_member_role(mock_jwt_decode, mock_get_jwks, client, setup_test_org_and_admin):
+async def test_change_member_role(
+    mock_jwt_decode, mock_get_jwks, client, setup_test_org_and_admin,
+):
+    """An admin can change a member's role on the membership row."""
     org, admin = setup_test_org_and_admin
 
-    # Create a member user in the org
     async with AsyncSessionLocal() as session:
         member = User(
-            clerk_user_id="member_role_change_clerk_id",
-            org_id=org.id,
+            clerk_user_id=f"member_role_change_clerk_id_{uuid.uuid4()}",
+            active_org_id=org.id,
             email="member_to_change@example.com",
             first_name="Member",
             last_name="User",
+        )
+        session.add(member)
+        await session.flush()
+
+        membership = OrganizationMember(
+            user_id=member.id,
+            org_id=org.id,
+            email=member.email,
             role="member",
             status="active",
         )
-        session.add(member)
+        session.add(membership)
         await session.commit()
-        await session.refresh(member)
-        member_id = member.id
+        await session.refresh(membership)
+        member_id = membership.id
 
     mock_get_jwks.return_value = {}
     mock_jwt_decode.return_value = {
@@ -470,14 +448,15 @@ async def test_change_member_role(mock_jwt_decode, mock_get_jwks, client, setup_
         response = await ac.patch(
             f"/api/v1/team/members/{member_id}/role",
             headers={"Authorization": "Bearer fake_token"},
-            json={"role": "viewer"}
+            json={"role": "viewer"},
         )
-    assert response.status_code == 200
-    assert response.json()["status"] == "success"
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["role"] == "viewer"
 
-    # Verify role was changed
     async with AsyncSessionLocal() as session:
-        result = await session.execute(select(User).where(User.id == member_id))
-        updated_member = result.scalar_one()
-        assert updated_member.role == "viewer"
-
+        result = await session.execute(
+            select(OrganizationMember).where(OrganizationMember.id == member_id)
+        )
+        m = result.scalar_one()
+        assert m.role == "viewer"
