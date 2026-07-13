@@ -88,6 +88,10 @@ class RegisterWorkspaceRequest(BaseModel):
 
     clerk_org_id: str
     name: str
+    # Optional — supplied during initial onboarding, not required for
+    # workspace-switcher creations.
+    industry: str | None = None
+    team_size: str | None = None
 
 
 __all__ = [
