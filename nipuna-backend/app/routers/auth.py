@@ -404,12 +404,12 @@ async def _handle_user_created(db: AsyncSession, data: dict) -> None:
                 first_name=data.get("first_name") or "",
                 last_name=data.get("last_name") or "",
                 phone=phone,
-                status="active",
-                role=pending_membership.role,  # carry over the inviter's choice
             )
             db.add(user)
             await db.flush()
-            # Now bind.
+            # Now bind the pending membership to the new user.
+            # The role was already set when the invite was created;
+            # status/role live on OrganizationMember, not User.
             pending_membership.user_id = user.id
             pending_membership.status = "active"
             user.active_org_id = pending_membership.org_id
@@ -422,14 +422,14 @@ async def _handle_user_created(db: AsyncSession, data: dict) -> None:
             )
             return
 
+    # Note: `status` and `role` were dropped from the User model in the
+    # multi-org migration (step 8). They now live on OrganizationMember.
     user = User(
         clerk_user_id=clerk_user_id,
         email=email,
         first_name=data.get("first_name") or "",
         last_name=data.get("last_name") or "",
         phone=phone,
-        status="active",
-        role="member",
     )
     db.add(user)
     logger.info("Created user clerk_user_id=%s", clerk_user_id)
