@@ -528,6 +528,86 @@ async def resolve_current_user(token: Optional[str], db: AsyncSession) -> User:
         # should normally have set this up, but this is the
         # last-resort bootstrap for a brand-new Clerk user.
         clerk_org_id = claims.get("org_id")
+
+        # JIT Sync: If the token contains an active Clerk org_id, ensure
+        # it is created locally and the user has an active membership row.
+        if clerk_org_id and clerk_org_id.startswith("org_"):
+            # Check if this organization exists in our DB
+            org_res = await db.execute(
+                select(Organization).where(Organization.clerk_org_id == clerk_org_id)
+            )
+            org = org_res.scalar_one_or_none()
+            if org is None:
+                # Fetch details from Clerk API
+                settings = get_settings()
+                from app.services.clerk import get_clerk_organization
+                clerk_org_data = await get_clerk_organization(clerk_org_id, settings.clerk_secret_key)
+                if clerk_org_data:
+                    from app.models.settings import WorkspaceSettings, OrgPreferences
+                    org_name = clerk_org_data.get("name") or "New Workspace"
+                    logo_url = clerk_org_data.get("logo_url") or clerk_org_data.get("image_url")
+                    org = Organization(
+                        clerk_org_id=clerk_org_id,
+                        name=org_name,
+                        logo_url=logo_url,
+                        plan="free",
+                        seats_max=5,
+                        ai_credits=100,
+                    )
+                    db.add(org)
+                    await db.flush()
+
+                    ws = WorkspaceSettings(org_id=org.id, name=org.name)
+                    prefs = OrgPreferences(
+                        org_id=org.id,
+                        approval_required=False,
+                        digest_time="09:00",
+                        escalation_window=24,
+                    )
+                    db.add(ws)
+                    db.add(prefs)
+                    await db.flush()
+                    logger.info("JIT-Created organization clerk_org_id=%s (%s)", clerk_org_id, org_name)
+
+            if org is not None:
+                # Check if the user has an active membership in this org
+                memb_res = await db.execute(
+                    select(OrganizationMember).where(
+                        OrganizationMember.org_id == org.id,
+                        OrganizationMember.user_id == user.id,
+                    )
+                )
+                membership = memb_res.scalar_one_or_none()
+                membership_updated = False
+                if membership is None:
+                    membership = OrganizationMember(
+                        user_id=user.id,
+                        org_id=org.id,
+                        email=user.email.lower(),
+                        role="admin",
+                        status="active",
+                    )
+                    db.add(membership)
+                    membership_updated = True
+                    logger.info("JIT-Linked user %s to org %s", user.email, clerk_org_id)
+                elif membership.status != "active":
+                    membership.status = "active"
+                    db.add(membership)
+                    membership_updated = True
+
+                # Update user.active_org_id to point to this org
+                user_updated = False
+                if user.active_org_id != org.id:
+                    user.active_org_id = org.id
+                    db.add(user)
+                    user_updated = True
+
+                if membership_updated or user_updated:
+                    await db.commit()
+                    await db.refresh(user)
+                    if membership_updated:
+                        await db.refresh(membership)
+
         if user.active_org_id is None:
             personal_clerk_id = f"manual_{clerk_user_id}"
             org_result = await db.execute(
