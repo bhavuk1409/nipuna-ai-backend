@@ -543,6 +543,14 @@ async def change_member_role(
     )).scalars().all()
     owner_id = _resolve_owner(active_memberships)
 
+    # Only the owner can change roles.
+    user_membership = next((m for m in active_memberships if m.user_id == user.id), None)
+    if user_membership is None or user_membership.id != owner_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the workspace owner can change member roles.",
+        )
+
     if owner_id is not None and target.id == owner_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -622,6 +630,14 @@ async def remove_member(
         .order_by(OrganizationMember.created_at.asc(), OrganizationMember.id.asc())
     )).scalars().all()
     owner_id = _resolve_owner(active_memberships)
+
+    # Only the owner can remove members.
+    user_membership = next((m for m in active_memberships if m.user_id == user.id), None)
+    if user_membership is None or user_membership.id != owner_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the workspace owner can remove members.",
+        )
 
     if owner_id is not None and target.id == owner_id:
         raise HTTPException(
