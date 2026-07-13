@@ -445,8 +445,6 @@ async def resolve_current_user(token: Optional[str], db: AsyncSession) -> User:
                             email=email,
                             first_name=first_name,
                             last_name=last_name,
-                            status="active",
-                            role="admin",
                         )
                         bootstrap_db.add(user)
                         await bootstrap_db.flush()
@@ -478,8 +476,6 @@ async def resolve_current_user(token: Optional[str], db: AsyncSession) -> User:
                         email=email,
                         first_name=first_name,
                         last_name=last_name,
-                        status="active",
-                        role="admin",
                     )
                     bootstrap_db.add(user)
                     await bootstrap_db.commit()
