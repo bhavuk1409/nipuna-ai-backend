@@ -720,10 +720,16 @@ async def resend_invite(
     delivery_note: str | None = None
 
     if invitee_user is not None:
-        delivery_note = (
-            "Invitee is already a Nipuna AI user. The invitation "
-            "appears in their notification bell — no email needed."
+        dashboard_link = f"{settings.frontend_url.rstrip('/')}/dashboard"
+        await send_team_invite_email(
+            to_email=invite.email,
+            org_name=org.name,
+            inviter_name=_display_name(user, user.email),
+            role=invite.role,  # type: ignore[arg-type]
+            share_link=dashboard_link,
+            logo_url=org.logo_url,
         )
+        delivery_note = "Invitation email re-sent."
     elif is_dev_org:
         # Dev-only path: no Clerk org, so no Clerk email. Build a
         # self-serve share link and re-send it via Resend.
