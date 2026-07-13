@@ -342,6 +342,16 @@ async def create_invite(
     )
     existing_user = existing_user_res.scalars().first()
     if existing_user is not None:
+        user_memberships_count = (await db.execute(
+            select(OrganizationMember)
+            .where(OrganizationMember.user_id == existing_user.id, OrganizationMember.status == "active")
+        )).scalars().all()
+        if len(user_memberships_count) >= 3:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="This user has reached the maximum limit of 3 workspaces.",
+            )
+
         existing_member = (await db.execute(
             select(OrganizationMember).where(
                 OrganizationMember.org_id == org.id,
@@ -824,6 +834,17 @@ async def accept_invitation(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="No pending invitation for this workspace.",
+        )
+
+    # Check active workspace limit
+    user_memberships_count = (await db.execute(
+        select(OrganizationMember)
+        .where(OrganizationMember.user_id == user.id, OrganizationMember.status == "active")
+    )).scalars().all()
+    if len(user_memberships_count) >= 3:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="You have reached the maximum limit of 3 workspaces. Please leave or delete a workspace before joining another.",
         )
 
     # Bind the current user to the pending membership and flip status.
