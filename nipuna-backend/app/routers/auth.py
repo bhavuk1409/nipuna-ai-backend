@@ -264,16 +264,46 @@ async def upload_workspace_logo(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Upload/update the company logo as a base64 string in the database.
-    This works for both Clerk-managed and manual/dev workspaces.
+
+    If `body.org_id` is provided, uploads the logo for that specific org
+    (the user must be an admin of it). Otherwise uploads for the active org.
+    This allows uploading logos for non-active workspaces from the switcher.
     """
-    await require_admin(user, db)
+    target_org = org  # default: active org
 
-    org.logo_url = body.logo_data
-    db.add(org)
+    if body.org_id is not None and body.org_id != org.id:
+        # Look up the target org
+        target_res = await db.execute(
+            select(Organization).where(Organization.id == body.org_id)
+        )
+        target_org = target_res.scalar_one_or_none()
+        if target_org is None:
+            raise HTTPException(status_code=404, detail="Workspace not found.")
+
+        # Verify the user is an admin of the target org
+        mem_res = await db.execute(
+            select(OrganizationMember).where(
+                OrganizationMember.user_id == user.id,
+                OrganizationMember.org_id == target_org.id,
+                OrganizationMember.status == "active",
+            )
+        )
+        membership = mem_res.scalar_one_or_none()
+        if membership is None or membership.role != "admin":
+            raise HTTPException(
+                status_code=403,
+                detail="Only admins can update this workspace's logo.",
+            )
+    else:
+        # Active org — use the standard require_admin check
+        await require_admin(user, db)
+
+    target_org.logo_url = body.logo_data
+    db.add(target_org)
     await db.commit()
-    await db.refresh(org)
+    await db.refresh(target_org)
 
-    return {"status": "ok", "logo_url": org.logo_url}
+    return {"status": "ok", "logo_url": target_org.logo_url, "org_id": str(target_org.id)}
 
 
 

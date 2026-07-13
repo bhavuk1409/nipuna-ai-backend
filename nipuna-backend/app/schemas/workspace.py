@@ -75,6 +75,9 @@ class SwitchOrgResponse(BaseModel):
 
 class UploadLogoRequest(BaseModel):
     logo_data: str
+    # If provided, upload logo for this specific org (not the active one).
+    # The caller must be an admin of the target org.
+    org_id: UUID | None = None
 
 
 class RegisterWorkspaceRequest(BaseModel):

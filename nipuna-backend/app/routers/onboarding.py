@@ -137,8 +137,47 @@ async def create_onboarding(
 
     if org is None:
         # Create a brand new org
-        # Use a unique fallback so we don't collide on the unique constraint
-        effective_clerk_org_id = clerk_org_id or f"manual_{clerk_user_id}"
+        effective_clerk_org_id = clerk_org_id
+
+        if not effective_clerk_org_id:
+            # If no clerk_org_id in JWT, try to create it in Clerk using Backend API
+            settings = get_settings()
+            if settings.clerk_secret_key:
+                try:
+                    import httpx
+                    async with httpx.AsyncClient(timeout=10.0) as client:
+                        # 1. Create org in Clerk
+                        resp = await client.post(
+                            "https://api.clerk.com/v1/organizations",
+                            json={"name": body.company_name},
+                            headers={
+                                "Authorization": f"Bearer {settings.clerk_secret_key}",
+                                "Content-Type": "application/json",
+                            },
+                        )
+                        if resp.status_code == 200:
+                            clerk_org_data = resp.json()
+                            new_org_id = clerk_org_data.get("id")
+                            if new_org_id:
+                                effective_clerk_org_id = new_org_id
+                                logger.info("Created Clerk organization '%s' via Backend API: %s", body.company_name, new_org_id)
+
+                                # 2. Add user to org in Clerk
+                                await client.post(
+                                    f"https://api.clerk.com/v1/organizations/{new_org_id}/memberships",
+                                    json={"user_id": clerk_user_id, "role": "org:admin"},
+                                    headers={
+                                        "Authorization": f"Bearer {settings.clerk_secret_key}",
+                                        "Content-Type": "application/json",
+                                    },
+                                )
+                except Exception as exc:
+                    logger.warning("Failed to create Clerk organization during onboarding auto-creation: %s", exc)
+
+        # Fallback to local manual ID if Clerk API call failed or is disabled
+        if not effective_clerk_org_id:
+            effective_clerk_org_id = f"manual_{clerk_user_id}"
+
         org = Organization(
             clerk_org_id=effective_clerk_org_id,
             name=body.company_name,
