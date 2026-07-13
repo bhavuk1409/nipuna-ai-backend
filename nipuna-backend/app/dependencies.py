@@ -605,50 +605,80 @@ async def resolve_current_user(token: Optional[str], db: AsyncSession) -> User:
                         await db.refresh(membership)
 
         if user.active_org_id is None:
-            personal_clerk_id = f"manual_{clerk_user_id}"
-            org_result = await db.execute(
-                select(Organization).where(Organization.clerk_org_id == personal_clerk_id)
+            # Before creating a "My Workspace" placeholder, check if the user
+            # already has any real org memberships. This happens during sign-up
+            # when the session is created BEFORE the company form is submitted:
+            # the user's JWT hits an API endpoint with no org_id, so we'd normally
+            # auto-create "My Workspace". But if `register-workspace` has already
+            # created a real org (or will be called momentarily), we should NOT
+            # create a placeholder — it will show up as a ghost in the switcher.
+            existing_memberships_res = await db.execute(
+                select(OrganizationMember).where(OrganizationMember.user_id == user.id).limit(1)
             )
-            personal_org = org_result.scalar_one_or_none()
-            if personal_org is None:
-                from app.models.settings import WorkspaceSettings, OrgPreferences
-                personal_org = Organization(
-                    clerk_org_id=personal_clerk_id,
-                    name=f"{user.first_name}'s Workspace" if user.first_name else "My Workspace",
-                    plan="free",
-                    seats_max=5,
-                    ai_credits=100,
-                )
-                db.add(personal_org)
-                await db.flush()
+            has_existing_memberships = existing_memberships_res.scalar_one_or_none() is not None
 
-                ws = WorkspaceSettings(org_id=personal_org.id, name=personal_org.name)
-                prefs = OrgPreferences(
-                    org_id=personal_org.id,
-                    approval_required=False,
-                    digest_time="09:00",
-                    escalation_window=24,
+            if has_existing_memberships:
+                # User already belongs to at least one org — pick it as active
+                # instead of creating a placeholder. resolve_current_org will also
+                # handle this lazily, but set it here for robustness.
+                best_mem_res = await db.execute(
+                    select(OrganizationMember)
+                    .where(OrganizationMember.user_id == user.id, OrganizationMember.status == "active")
+                    .order_by(OrganizationMember.created_at.desc())
+                    .limit(1)
                 )
-                db.add(ws)
-                db.add(prefs)
-
-                # Also create the membership row for the user.
-                membership = OrganizationMember(
-                    user_id=user.id,
-                    org_id=personal_org.id,
-                    email=user.email.lower(),
-                    role="admin",
-                    status="active",
+                best_mem = best_mem_res.scalar_one_or_none()
+                if best_mem is not None:
+                    user.active_org_id = best_mem.org_id
+                    db.add(user)
+                    await db.commit()
+                    await db.refresh(user)
+                    logger.info("Skipped placeholder creation; assigned active_org_id=%s for user %s", user.active_org_id, user.email)
+            else:
+                personal_clerk_id = f"manual_{clerk_user_id}"
+                org_result = await db.execute(
+                    select(Organization).where(Organization.clerk_org_id == personal_clerk_id)
                 )
-                db.add(membership)
-                await db.flush()
-                logger.info("Automatically created default workspace %s for user %s", personal_org.name, user.email)
+                personal_org = org_result.scalar_one_or_none()
+                if personal_org is None:
+                    from app.models.settings import WorkspaceSettings, OrgPreferences
+                    personal_org = Organization(
+                        clerk_org_id=personal_clerk_id,
+                        name=f"{user.first_name}'s Workspace" if user.first_name else "My Workspace",
+                        plan="free",
+                        seats_max=5,
+                        ai_credits=100,
+                    )
+                    db.add(personal_org)
+                    await db.flush()
 
-            user.active_org_id = personal_org.id
-            db.add(user)
-            await db.commit()
-            await db.refresh(user)
-            logger.info("Synchronized user %s to personal workspace %s", user.email, personal_org.id)
+                    ws = WorkspaceSettings(org_id=personal_org.id, name=personal_org.name)
+                    prefs = OrgPreferences(
+                        org_id=personal_org.id,
+                        approval_required=False,
+                        digest_time="09:00",
+                        escalation_window=24,
+                    )
+                    db.add(ws)
+                    db.add(prefs)
+
+                    # Also create the membership row for the user.
+                    membership = OrganizationMember(
+                        user_id=user.id,
+                        org_id=personal_org.id,
+                        email=user.email.lower(),
+                        role="admin",
+                        status="active",
+                    )
+                    db.add(membership)
+                    await db.flush()
+                    logger.info("Automatically created default workspace %s for user %s", personal_org.name, user.email)
+
+                user.active_org_id = personal_org.id
+                db.add(user)
+                await db.commit()
+                await db.refresh(user)
+                logger.info("Synchronized user %s to personal workspace %s", user.email, personal_org.id)
 
     return user
 

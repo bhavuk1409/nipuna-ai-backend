@@ -249,6 +249,47 @@ async def register_workspace(
         org.id, user.email,
     )
 
+    # ── Auto-clean placeholder workspaces ─────────────────────────────────────
+    # When the user's JWT first hits any API endpoint during sign-up (before
+    # they complete the company form), the backend JIT-creates a
+    # `manual_<clerk_user_id>` placeholder workspace called "My Workspace" and
+    # sets it as the user's active org. Once the user registers a real named
+    # workspace, that placeholder is no longer needed. Remove it so the
+    # workspace switcher only shows the real org, not the ghost "My Workspace".
+    #
+    # We only delete it if:
+    #   1. It has a `manual_` clerk_org_id (auto-created placeholder)
+    #   2. This user is its ONLY member (no other real users joined it)
+    #   3. It is NOT the org we just created (sanity check)
+    try:
+        placeholder_orgs_res = await db.execute(
+            select(Organization, OrganizationMember)
+            .join(OrganizationMember, OrganizationMember.org_id == Organization.id)
+            .where(
+                OrganizationMember.user_id == user.id,
+                Organization.clerk_org_id.like("manual_%"),
+                Organization.id != org.id,
+            )
+        )
+        placeholder_pairs = placeholder_orgs_res.all()
+        for placeholder_org, _ in placeholder_pairs:
+            # Count total members of this placeholder org
+            member_count = (await db.execute(
+                select(OrganizationMember)
+                .where(OrganizationMember.org_id == placeholder_org.id)
+            )).scalars().all()
+            # Only delete if this user is the only member
+            if len(member_count) <= 1:
+                await db.delete(placeholder_org)
+                logger.info(
+                    "register_workspace: cleaned up placeholder org %s for user %s",
+                    placeholder_org.name, user.email,
+                )
+        await db.commit()
+    except Exception as cleanup_err:
+        # Cleanup is best-effort — never block the main flow
+        logger.warning("register_workspace: placeholder cleanup failed: %s", cleanup_err)
+
     return {
         "org_id": str(org.id),
         "clerk_org_id": org.clerk_org_id,

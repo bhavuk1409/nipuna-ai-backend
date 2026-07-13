@@ -5,6 +5,7 @@ import time
 import random
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -59,18 +60,29 @@ async def update_workspace(
     return {"status": "ok"}
 
 
+class DeleteWorkspaceBody(BaseModel):
+    confirm_name: str
+
+
 @router.delete("/workspace/{clerk_org_id}")
 async def delete_workspace(
     clerk_org_id: str,
-    body: dict[str, str],
+    body: DeleteWorkspaceBody,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, str]:
+    """Permanently delete a workspace.
+
+    Only workspace admins (role='admin') may call this. The caller must
+    confirm the deletion by passing the exact workspace name in
+    ``confirm_name``. Personal/manual workspaces (placeholder orgs
+    auto-created during onboarding) are blocked from deletion here.
+    """
     # Block any attempt to delete a personal/manual workspace
     if clerk_org_id.startswith("manual_") or clerk_org_id == "manual":
         raise HTTPException(
             status_code=400,
-            detail="This workspace cannot be deleted."
+            detail="Personal workspaces cannot be deleted.",
         )
 
     # Fetch the organization
@@ -81,89 +93,74 @@ async def delete_workspace(
     if not org:
         raise HTTPException(status_code=404, detail="Workspace not found")
 
-    confirm_name = body.get("confirm_name", "")
-    if confirm_name != org.name:
+    # Verify confirmation name
+    if body.confirm_name != org.name:
         raise HTTPException(
             status_code=400,
-            detail="Confirmation name does not match workspace name"
+            detail="Confirmation name does not match workspace name",
         )
 
-    # Check Clerk organization membership API to verify admin role
-    settings = get_settings()
-    is_admin = False
-
-    if settings.clerk_secret_key:
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(
-                f"https://api.clerk.com/v1/users/{user.clerk_user_id}/organization_memberships",
-                headers={"Authorization": f"Bearer {settings.clerk_secret_key}"},
-            )
-            if resp.status_code == 200:
-                memberships = resp.json().get("data", [])
-                for m in memberships:
-                    target_org = m.get("organization", {})
-                    if target_org.get("id") == clerk_org_id:
-                        role = m.get("role")
-                        if role in ("org:admin", "admin"):
-                            is_admin = True
-                            break
-            else:
-                logger.warning("Failed to fetch organization memberships from Clerk: %s", resp.text)
-    else:
-        # Dev / test environment bypass
-        is_admin = True
-
-    if not is_admin:
+    # ── Check admin role in our own DB (fast, no Clerk round-trip needed) ──
+    from app.models.organization_member import OrganizationMember
+    mem_result = await db.execute(
+        select(OrganizationMember).where(
+            OrganizationMember.user_id == user.id,
+            OrganizationMember.org_id == org.id,
+            OrganizationMember.status == "active",
+        )
+    )
+    membership = mem_result.scalar_one_or_none()
+    if membership is None or membership.role not in ("admin",):
         raise HTTPException(
             status_code=403,
-            detail="Only workspace administrators can delete this workspace"
+            detail="Only workspace admins can delete this workspace.",
         )
 
-    # Safety: detach all users from the deleted org. The membership
-    # table will be cleaned up by the FK ON DELETE CASCADE on
-    # `organization_members.org_id`, but we also need to clear the
-    # `User.active_org_id` pointer for users who had this org as
-    # their active. The dep will lazy-pick a new active org from
-    # the user's other memberships on their next request.
+    # ── Safety: clear active_org_id for all users in this org ──────────────
+    # The FK ON DELETE CASCADE on organization_members.org_id cleans up
+    # membership rows automatically. We just need to null out active_org_id
+    # for any user who had this org as their active workspace.
     users_result = await db.execute(
         select(User).where(User.active_org_id == org.id)
     )
     active_users = users_result.scalars().all()
-
     for u in active_users:
         u.active_org_id = None
-        # Legacy column — same intent. If the user has no other
-        # active memberships, the dep will set this up again on
-        # the next request.
-        u.org_id = None
         db.add(u)
 
-    # Log before deleting the organization from Clerk and database
+    # Log before deleting
     await log_action(
         db,
         org_id=org.id,
         user_id=user.id,
         action="workspace_deleted",
-        metadata={"org_id": str(org.id), "name": org.name}
+        metadata={"org_id": str(org.id), "name": org.name},
     )
 
-    # Delete from Clerk
-    if settings.clerk_secret_key:
-        async with httpx.AsyncClient() as client:
-            clerk_resp = await client.delete(
-                f"https://api.clerk.com/v1/organizations/{clerk_org_id}",
-                headers={"Authorization": f"Bearer {settings.clerk_secret_key}"},
-            )
-            if clerk_resp.status_code not in (200, 204) and clerk_resp.status_code != 404:
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Failed to delete organization from Clerk: {clerk_resp.text}"
+    # ── Delete from Clerk (best-effort) ────────────────────────────────────
+    settings = get_settings()
+    if settings.clerk_secret_key and clerk_org_id.startswith("org_"):
+        try:
+            async with httpx.AsyncClient() as client:
+                clerk_resp = await client.delete(
+                    f"https://api.clerk.com/v1/organizations/{clerk_org_id}",
+                    headers={"Authorization": f"Bearer {settings.clerk_secret_key}"},
                 )
+                if clerk_resp.status_code not in (200, 204, 404):
+                    logger.warning(
+                        "Clerk delete org returned %s: %s",
+                        clerk_resp.status_code, clerk_resp.text,
+                    )
+        except Exception as exc:
+            logger.warning("Failed to delete org from Clerk (will still delete from DB): %s", exc)
 
     await db.delete(org)
     await db.commit()
 
+    logger.info("Workspace %s (%s) deleted by user %s", org.name, org.id, user.id)
     return {"status": "workspace deleted"}
+
+
 
 
 @router.get("/preferences", response_model=PreferencesResponse)
