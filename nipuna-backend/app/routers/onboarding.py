@@ -149,7 +149,10 @@ async def create_onboarding(
                         # 1. Create org in Clerk
                         resp = await client.post(
                             "https://api.clerk.com/v1/organizations",
-                            json={"name": body.company_name},
+                            json={
+                                "name": body.company_name,
+                                "created_by": clerk_user_id,
+                            },
                             headers={
                                 "Authorization": f"Bearer {settings.clerk_secret_key}",
                                 "Content-Type": "application/json",
@@ -160,17 +163,12 @@ async def create_onboarding(
                             new_org_id = clerk_org_data.get("id")
                             if new_org_id:
                                 effective_clerk_org_id = new_org_id
-                                logger.info("Created Clerk organization '%s' via Backend API: %s", body.company_name, new_org_id)
-
-                                # 2. Add user to org in Clerk
-                                await client.post(
-                                    f"https://api.clerk.com/v1/organizations/{new_org_id}/memberships",
-                                    json={"user_id": clerk_user_id, "role": "org:admin"},
-                                    headers={
-                                        "Authorization": f"Bearer {settings.clerk_secret_key}",
-                                        "Content-Type": "application/json",
-                                    },
-                                )
+                                logger.info("Created Clerk organization '%s' via Backend API: %s (creator: %s)", body.company_name, new_org_id, clerk_user_id)
+                        else:
+                            logger.warning(
+                                "Clerk organization creation failed with status %s: %s",
+                                resp.status_code, resp.text[:300]
+                            )
                 except Exception as exc:
                     logger.warning("Failed to create Clerk organization during onboarding auto-creation: %s", exc)
 
