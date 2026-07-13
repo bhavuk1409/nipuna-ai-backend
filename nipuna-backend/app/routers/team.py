@@ -45,7 +45,7 @@ import logging
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -520,6 +520,7 @@ async def create_invite(
 async def change_member_role(
     membership_id: uuid.UUID,
     body: ChangeRoleRequest,
+    background_tasks: BackgroundTasks,
     user: User = Depends(get_current_user),
     _admin: User = Depends(require_admin),
     org: Organization = Depends(get_current_org),
@@ -561,6 +562,17 @@ async def change_member_role(
     db.add(target)
     await db.commit()
     await db.refresh(target)
+
+    # Trigger email notification for role change
+    from app.services.notifications.role_change_email import send_role_change_email
+    background_tasks.add_task(
+        send_role_change_email,
+        to_email=target.email,
+        org_name=org.name,
+        role=body.role,
+        updater_name=_display_name(user, user.email),
+        logo_url=org.logo_url,
+    )
 
     # (The `OrganizationMember.role` is the source of truth — the
     # legacy `User.role` column was dropped in step 8.)
