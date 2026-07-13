@@ -77,6 +77,16 @@ class UploadLogoRequest(BaseModel):
     logo_data: str
 
 
+class RegisterWorkspaceRequest(BaseModel):
+    """Sent by the frontend immediately after Clerk's `createOrganization`
+    to pre-register the org in our DB before redirecting to /dashboard.
+    This ensures the membership row exists when the page reloads.
+    """
+
+    clerk_org_id: str
+    name: str
+
+
 __all__ = [
     "MemberRole",
     "MemberStatus",
@@ -85,4 +95,5 @@ __all__ = [
     "SwitchOrgRequest",
     "SwitchOrgResponse",
     "UploadLogoRequest",
+    "RegisterWorkspaceRequest",
 ]

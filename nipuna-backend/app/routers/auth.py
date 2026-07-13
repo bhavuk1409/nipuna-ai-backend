@@ -24,6 +24,7 @@ from app.schemas.workspace import (
     SwitchOrgResponse,
     UserProfileResponse,
     UploadLogoRequest,
+    RegisterWorkspaceRequest,
 )
 from app.utils.audit import log_action
 from app.dependencies import get_current_user, get_current_org, require_admin
@@ -160,6 +161,99 @@ async def switch_org(
         role=membership.role,  # type: ignore[arg-type]
         status=membership.status,  # type: ignore[arg-type]
     )
+
+
+@router.post("/register-workspace", status_code=201)
+async def register_workspace(
+    body: RegisterWorkspaceRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Pre-register a Clerk org in the local DB right after the frontend
+    calls Clerk's `createOrganization`. This ensures the Organization and
+    OrganizationMember rows exist before the page redirects to /dashboard,
+    sidestepping the race condition where the Clerk webhook hasn't fired yet.
+
+    Idempotent: if the org already exists it just sets `active_org_id` and
+    returns the existing record.
+    """
+    if not body.clerk_org_id.startswith("org_"):
+        raise HTTPException(status_code=400, detail="Invalid clerk_org_id format.")
+
+    # Look up or create the Organization row.
+    org_res = await db.execute(
+        select(Organization).where(Organization.clerk_org_id == body.clerk_org_id)
+    )
+    org = org_res.scalar_one_or_none()
+
+    if org is None:
+        org = Organization(
+            clerk_org_id=body.clerk_org_id,
+            name=body.name,
+            plan="free",
+            seats_max=5,
+            ai_credits=100,
+        )
+        db.add(org)
+        await db.flush()  # get org.id without committing yet
+
+        ws = WorkspaceSettings(org_id=org.id, name=org.name)
+        prefs = OrgPreferences(
+            org_id=org.id,
+            approval_required=False,
+            digest_time="09:00",
+            escalation_window=24,
+        )
+        db.add(ws)
+        db.add(prefs)
+        logger.info(
+            "register_workspace: created Organization %s (clerk_org_id=%s) for user %s",
+            org.name, body.clerk_org_id, user.email,
+        )
+
+    # Look up or create the OrganizationMember row.
+    mem_res = await db.execute(
+        select(OrganizationMember).where(
+            OrganizationMember.user_id == user.id,
+            OrganizationMember.org_id == org.id,
+        )
+    )
+    membership = mem_res.scalar_one_or_none()
+
+    if membership is None:
+        membership = OrganizationMember(
+            user_id=user.id,
+            org_id=org.id,
+            email=user.email.lower(),
+            role="admin",
+            status="active",
+        )
+        db.add(membership)
+        logger.info(
+            "register_workspace: created admin membership for user %s in org %s",
+            user.email, org.id,
+        )
+    elif membership.status != "active":
+        membership.status = "active"
+        db.add(membership)
+
+    # Switch the user's active org to the new one.
+    user.active_org_id = org.id
+    db.add(user)
+
+    await db.commit()
+    await db.refresh(org)
+
+    logger.info(
+        "register_workspace: set active_org_id=%s for user %s",
+        org.id, user.email,
+    )
+
+    return {
+        "org_id": str(org.id),
+        "clerk_org_id": org.clerk_org_id,
+        "name": org.name,
+    }
 
 
 @router.post("/workspace/logo")
