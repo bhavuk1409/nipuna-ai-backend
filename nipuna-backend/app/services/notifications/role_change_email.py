@@ -65,15 +65,7 @@ async def send_role_change_email(
               </table>
         """
     else:
-        org_logo_html = f"""
-              <table cellpadding="0" cellspacing="0" border="0" style="background: #111111; border-radius: 14px; width: 56px; height: 56px; text-align: center; margin-bottom: 20px;">
-                <tr>
-                  <td style="font-size: 20px; font-weight: 800; color: #ffffff; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; text-align: center; vertical-align: middle; line-height: 56px;">
-                    {org_initials}
-                  </td>
-                </tr>
-              </table>
-        """
+        org_logo_html = ""
 
     html = f"""
 <!DOCTYPE html>
