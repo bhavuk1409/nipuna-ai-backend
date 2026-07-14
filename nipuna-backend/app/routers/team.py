@@ -303,6 +303,23 @@ async def list_team(
 # ---------------------------------------------------------------------------
 
 
+async def _jit_sync_org_logo(org: Organization, secret_key: str, db: AsyncSession) -> None:
+    """Helper to fetch and save the org's logo from Clerk if currently missing."""
+    if not org.logo_url and org.clerk_org_id and org.clerk_org_id.startswith("org_"):
+        try:
+            from app.services.clerk import get_clerk_organization
+            clerk_org_data = await get_clerk_organization(org.clerk_org_id, secret_key)
+            if clerk_org_data:
+                logo_url = clerk_org_data.get("logo_url") or clerk_org_data.get("image_url")
+                if logo_url:
+                    org.logo_url = logo_url
+                    db.add(org)
+                    await db.commit()
+        except Exception as e:
+            logger.warning("Failed to JIT sync org logo from Clerk: %s", e)
+
+
+
 @router.post(
     "/invites",
     response_model=PendingInviteResponse,
@@ -315,20 +332,8 @@ async def create_invite(
     org: Organization = Depends(get_current_org),
     db: AsyncSession = Depends(get_db),
 ) -> PendingInviteResponse:
-    """Create a pending invite for `body.email` in the current org.
-
-    Branch on whether the email is already a Clerk user. Either way
-    we write a pending `OrganizationMember` row (the new "placeholder"
-    — the old `User.clerk_user_id="invited_*"` pattern is gone).
-
-    - Existing Clerk user → no email (synthetic notification surfaces
-      the invite in their bell on next poll).
-    - Dev `manual_*` org → no Clerk API call; we build a self-serve
-      share link the inviter can pass to the invitee manually.
-    - Real Clerk org, new email → call Clerk's
-      `POST /v1/organizations/{id}/invitations`. If Clerk rejects, we
-      roll back the membership and return 502 (no orphan rows).
-    """
+    # Ensure logo is synced if missing
+    await _jit_sync_org_logo(org, get_settings().clerk_secret_key, db)
 
     # Reject if a User with this email is already an active member.
     # Note: `User.email` is not UNIQUE in the schema (Clerk users can
@@ -731,6 +736,9 @@ async def resend_invite(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Invitation not found.",
         )
+
+    # Ensure logo is synced if missing
+    await _jit_sync_org_logo(org, get_settings().clerk_secret_key, db)
 
     settings = get_settings()
     is_dev_org = org.clerk_org_id.startswith("manual_")

@@ -187,9 +187,20 @@ async def register_workspace(
     org = org_res.scalar_one_or_none()
 
     if org is None:
+        settings = get_settings()
+        from app.services.clerk import get_clerk_organization
+        logo_url = None
+        try:
+            clerk_org_data = await get_clerk_organization(body.clerk_org_id, settings.clerk_secret_key)
+            if clerk_org_data:
+                logo_url = clerk_org_data.get("logo_url") or clerk_org_data.get("image_url")
+        except Exception as e:
+            logger.warning("Failed to fetch organization logo from Clerk in register-workspace: %s", e)
+
         org = Organization(
             clerk_org_id=body.clerk_org_id,
             name=body.name,
+            logo_url=logo_url,
             plan="free",
             seats_max=5,
             ai_credits=100,
