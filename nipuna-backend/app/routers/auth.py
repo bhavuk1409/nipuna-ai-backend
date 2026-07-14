@@ -472,6 +472,9 @@ async def clerk_webhook(
         elif event_type == "organization.created":
             await _handle_org_created(db, data)
 
+        elif event_type == "organization.updated":
+            await _handle_org_updated(db, data)
+
         elif event_type == "organizationMembership.created":
             await _handle_membership_created(db, data)
 
@@ -598,6 +601,35 @@ async def _handle_org_created(db: AsyncSession, data: dict) -> None:
         metadata={"clerk_org_id": clerk_org_id, "name": org.name},
     )
     logger.info("Created org clerk_org_id=%s", clerk_org_id)
+
+
+async def _handle_org_updated(db: AsyncSession, data: dict) -> None:
+    clerk_org_id = data.get("id")
+    if not clerk_org_id:
+        return
+
+    result = await db.execute(select(Organization).where(Organization.clerk_org_id == clerk_org_id))
+    org = result.scalar_one_or_none()
+    if org is not None:
+        name = data.get("name")
+        if name:
+            org.name = name
+            # Also update name in WorkspaceSettings if they exist
+            ws_res = await db.execute(
+                select(WorkspaceSettings).where(WorkspaceSettings.org_id == org.id)
+            )
+            ws = ws_res.scalar_one_or_none()
+            if ws is not None:
+                ws.name = name
+                db.add(ws)
+
+        logo_url = data.get("logo_url") or data.get("image_url")
+        if logo_url:
+            org.logo_url = logo_url
+
+        db.add(org)
+        logger.info("Updated org clerk_org_id=%s (name=%s, logo_url=%s)", clerk_org_id, name, logo_url)
+
 
 
 async def _handle_membership_created(db: AsyncSession, data: dict) -> None:
