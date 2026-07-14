@@ -534,18 +534,15 @@ async def resolve_current_user(token: Optional[str], db: AsyncSession) -> User:
             )
             org = org_res.scalar_one_or_none()
             if org is None:
-                # Fetch details from Clerk API
-                settings = get_settings()
-                from app.services.clerk import get_clerk_organization
-                clerk_org_data = await get_clerk_organization(clerk_org_id, settings.clerk_secret_key)
-                if clerk_org_data:
-                    from app.models.settings import WorkspaceSettings, OrgPreferences
-                    org_name = clerk_org_data.get("name") or "New Workspace"
-                    logo_url = clerk_org_data.get("logo_url") or clerk_org_data.get("image_url")
+                # Fast INSERT — no Clerk API call here so we don't create a
+                # timing window where the concurrent org.created webhook can
+                # win the race and leave us with an unhandled IntegrityError.
+                from sqlalchemy.exc import IntegrityError as _IntegrityError
+                from app.models.settings import WorkspaceSettings, OrgPreferences
+                try:
                     org = Organization(
                         clerk_org_id=clerk_org_id,
-                        name=org_name,
-                        logo_url=logo_url,
+                        name="New Workspace",
                         plan="free",
                         seats_max=5,
                         ai_credits=100,
@@ -563,7 +560,15 @@ async def resolve_current_user(token: Optional[str], db: AsyncSession) -> User:
                     db.add(ws)
                     db.add(prefs)
                     await db.flush()
-                    logger.info("JIT-Created organization clerk_org_id=%s (%s)", clerk_org_id, org_name)
+                    logger.info("JIT-Created organization clerk_org_id=%s", clerk_org_id)
+                except _IntegrityError:
+                    # Webhook beat us — roll back and fetch the existing row.
+                    await db.rollback()
+                    org_res2 = await db.execute(
+                        select(Organization).where(Organization.clerk_org_id == clerk_org_id)
+                    )
+                    org = org_res2.scalar_one_or_none()
+                    logger.info("JIT org creation: recovered from webhook race for clerk_org_id=%s", clerk_org_id)
 
             if org is not None:
                 # Check if the user has an active membership in this org
