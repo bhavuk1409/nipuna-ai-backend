@@ -181,28 +181,22 @@ async def register_workspace(
         raise HTTPException(status_code=400, detail="Invalid clerk_org_id format.")
 
     # Look up or create the Organization row.
+    # We do this in two passes:
+    #   1. Fast INSERT (no network calls) inside the transaction to minimise
+    #      the window where a concurrent Clerk webhook can win the race.
+    #   2. After the org row is stable, update logo_url from Clerk asynchronously.
     org_res = await db.execute(
         select(Organization).where(Organization.clerk_org_id == body.clerk_org_id)
     )
     org = org_res.scalar_one_or_none()
 
     if org is None:
-        settings = get_settings()
-        from app.services.clerk import get_clerk_organization
-        logo_url = None
-        try:
-            clerk_org_data = await get_clerk_organization(body.clerk_org_id, settings.clerk_secret_key)
-            if clerk_org_data:
-                logo_url = clerk_org_data.get("logo_url") or clerk_org_data.get("image_url")
-        except Exception as e:
-            logger.warning("Failed to fetch organization logo from Clerk in register-workspace: %s", e)
-
+        # Pass 1 — fast, no network calls
         from sqlalchemy.exc import IntegrityError
         try:
             org = Organization(
                 clerk_org_id=body.clerk_org_id,
                 name=body.name,
-                logo_url=logo_url,
                 plan="free",
                 seats_max=5,
                 ai_credits=100,
@@ -225,12 +219,12 @@ async def register_workspace(
                 org.name, body.clerk_org_id, user.email,
             )
         except IntegrityError:
+            # The Clerk webhook fired and committed first — recover gracefully.
             await db.rollback()
-            # The webhook won the race — fetch the organization that was just inserted
-            org_res = await db.execute(
+            org_res2 = await db.execute(
                 select(Organization).where(Organization.clerk_org_id == body.clerk_org_id)
             )
-            org = org_res.scalar_one()
+            org = org_res2.scalar_one()
             logger.info(
                 "register_workspace: recovered from concurrent insertion of Organization clerk_org_id=%s",
                 body.clerk_org_id,
@@ -273,6 +267,37 @@ async def register_workspace(
         "register_workspace: set active_org_id=%s for user %s",
         org.id, user.email,
     )
+
+    # Pass 2 — fetch and persist logo_url from Clerk in the background so
+    # we don't block the sign-up response on a network call.
+    if not org.logo_url and body.clerk_org_id.startswith("org_"):
+        import asyncio
+        from app.services.clerk import get_clerk_organization
+        from app.database import AsyncSessionLocal
+
+        async def _sync_logo(clerk_org_id: str) -> None:
+            try:
+                settings = get_settings()
+                clerk_org_data = await get_clerk_organization(clerk_org_id, settings.clerk_secret_key)
+                if not clerk_org_data:
+                    return
+                logo_url = clerk_org_data.get("logo_url") or clerk_org_data.get("image_url")
+                if not logo_url:
+                    return
+                async with AsyncSessionLocal() as bg_db:
+                    res = await bg_db.execute(
+                        select(Organization).where(Organization.clerk_org_id == clerk_org_id)
+                    )
+                    bg_org = res.scalar_one_or_none()
+                    if bg_org and not bg_org.logo_url:
+                        bg_org.logo_url = logo_url
+                        bg_db.add(bg_org)
+                        await bg_db.commit()
+                        logger.info("register_workspace: synced logo_url for org %s", clerk_org_id)
+            except Exception as _e:
+                logger.warning("register_workspace: background logo sync failed: %s", _e)
+
+        asyncio.create_task(_sync_logo(body.clerk_org_id))
 
     # ── Auto-clean placeholder workspaces ─────────────────────────────────────
     # When the user's JWT first hits any API endpoint during sign-up (before
