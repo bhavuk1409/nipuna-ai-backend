@@ -197,30 +197,44 @@ async def register_workspace(
         except Exception as e:
             logger.warning("Failed to fetch organization logo from Clerk in register-workspace: %s", e)
 
-        org = Organization(
-            clerk_org_id=body.clerk_org_id,
-            name=body.name,
-            logo_url=logo_url,
-            plan="free",
-            seats_max=5,
-            ai_credits=100,
-        )
-        db.add(org)
-        await db.flush()  # get org.id without committing yet
+        from sqlalchemy.exc import IntegrityError
+        try:
+            org = Organization(
+                clerk_org_id=body.clerk_org_id,
+                name=body.name,
+                logo_url=logo_url,
+                plan="free",
+                seats_max=5,
+                ai_credits=100,
+            )
+            db.add(org)
+            await db.flush()  # get org.id without committing yet
 
-        ws = WorkspaceSettings(org_id=org.id, name=org.name)
-        prefs = OrgPreferences(
-            org_id=org.id,
-            approval_required=False,
-            digest_time="09:00",
-            escalation_window=24,
-        )
-        db.add(ws)
-        db.add(prefs)
-        logger.info(
-            "register_workspace: created Organization %s (clerk_org_id=%s) for user %s",
-            org.name, body.clerk_org_id, user.email,
-        )
+            ws = WorkspaceSettings(org_id=org.id, name=org.name)
+            prefs = OrgPreferences(
+                org_id=org.id,
+                approval_required=False,
+                digest_time="09:00",
+                escalation_window=24,
+            )
+            db.add(ws)
+            db.add(prefs)
+            await db.flush()
+            logger.info(
+                "register_workspace: created Organization %s (clerk_org_id=%s) for user %s",
+                org.name, body.clerk_org_id, user.email,
+            )
+        except IntegrityError:
+            await db.rollback()
+            # The webhook won the race — fetch the organization that was just inserted
+            org_res = await db.execute(
+                select(Organization).where(Organization.clerk_org_id == body.clerk_org_id)
+            )
+            org = org_res.scalar_one()
+            logger.info(
+                "register_workspace: recovered from concurrent insertion of Organization clerk_org_id=%s",
+                body.clerk_org_id,
+            )
 
     # Look up or create the OrganizationMember row.
     mem_res = await db.execute(
