@@ -220,17 +220,25 @@ async def register_workspace(
             )
         except IntegrityError:
             # The Clerk webhook fired and committed first — recover gracefully.
+            # NOTE: rollback() also expires the `user` object, so we must
+            # re-fetch it in this session before using user.id below.
             await db.rollback()
             org_res2 = await db.execute(
                 select(Organization).where(Organization.clerk_org_id == body.clerk_org_id)
             )
             org = org_res2.scalar_one()
+            # Re-fetch user since it was loaded in the now-rolled-back transaction
+            user_res2 = await db.execute(
+                select(user.__class__).where(user.__class__.id == user.id)
+            )
+            user = user_res2.scalar_one()
             logger.info(
                 "register_workspace: recovered from concurrent insertion of Organization clerk_org_id=%s",
                 body.clerk_org_id,
             )
 
     # Look up or create the OrganizationMember row.
+    from sqlalchemy.exc import IntegrityError as _MemberIntegrityError
     mem_res = await db.execute(
         select(OrganizationMember).where(
             OrganizationMember.user_id == user.id,
@@ -240,18 +248,43 @@ async def register_workspace(
     membership = mem_res.scalar_one_or_none()
 
     if membership is None:
-        membership = OrganizationMember(
-            user_id=user.id,
-            org_id=org.id,
-            email=user.email.lower(),
-            role="admin",
-            status="active",
-        )
-        db.add(membership)
-        logger.info(
-            "register_workspace: created admin membership for user %s in org %s",
-            user.email, org.id,
-        )
+        try:
+            membership = OrganizationMember(
+                user_id=user.id,
+                org_id=org.id,
+                email=user.email.lower(),
+                role="admin",
+                status="active",
+            )
+            db.add(membership)
+            await db.flush()
+            logger.info(
+                "register_workspace: created admin membership for user %s in org %s",
+                user.email, org.id,
+            )
+        except _MemberIntegrityError:
+            # Webhook's organizationMembership.created already committed this row.
+            await db.rollback()
+            mem_res2 = await db.execute(
+                select(OrganizationMember).where(
+                    OrganizationMember.user_id == user.id,
+                    OrganizationMember.org_id == org.id,
+                )
+            )
+            membership = mem_res2.scalar_one()
+            # Re-fetch user and org after rollback
+            user_res3 = await db.execute(
+                select(user.__class__).where(user.__class__.id == user.id)
+            )
+            user = user_res3.scalar_one()
+            org_res3 = await db.execute(
+                select(Organization).where(Organization.id == org.id)
+            )
+            org = org_res3.scalar_one()
+            logger.info(
+                "register_workspace: recovered from concurrent membership insertion for user %s in org %s",
+                user.email, org.id,
+            )
     elif membership.status != "active":
         membership.status = "active"
         db.add(membership)

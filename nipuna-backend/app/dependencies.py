@@ -568,6 +568,11 @@ async def resolve_current_user(token: Optional[str], db: AsyncSession) -> User:
                         select(Organization).where(Organization.clerk_org_id == clerk_org_id)
                     )
                     org = org_res2.scalar_one_or_none()
+                    # Re-fetch user since rollback expires it
+                    user_res2 = await db.execute(
+                        select(user.__class__).where(user.__class__.id == user.id)
+                    )
+                    user = user_res2.scalar_one()
                     logger.info("JIT org creation: recovered from webhook race for clerk_org_id=%s", clerk_org_id)
 
             if org is not None:
@@ -581,16 +586,33 @@ async def resolve_current_user(token: Optional[str], db: AsyncSession) -> User:
                 membership = memb_res.scalar_one_or_none()
                 membership_updated = False
                 if membership is None:
-                    membership = OrganizationMember(
-                        user_id=user.id,
-                        org_id=org.id,
-                        email=user.email.lower(),
-                        role="admin",
-                        status="active",
-                    )
-                    db.add(membership)
-                    membership_updated = True
-                    logger.info("JIT-Linked user %s to org %s", user.email, clerk_org_id)
+                    try:
+                        membership = OrganizationMember(
+                            user_id=user.id,
+                            org_id=org.id,
+                            email=user.email.lower(),
+                            role="admin",
+                            status="active",
+                        )
+                        db.add(membership)
+                        await db.flush()
+                        membership_updated = True
+                        logger.info("JIT-Linked user %s to org %s", user.email, clerk_org_id)
+                    except _IntegrityError:
+                        # Webhook's organizationMembership.created committed this row.
+                        await db.rollback()
+                        memb_res2 = await db.execute(
+                            select(OrganizationMember).where(
+                                OrganizationMember.org_id == org.id,
+                                OrganizationMember.user_id == user.id,
+                            )
+                        )
+                        membership = memb_res2.scalar_one()
+                        user_res3 = await db.execute(
+                            select(user.__class__).where(user.__class__.id == user.id)
+                        )
+                        user = user_res3.scalar_one()
+                        logger.info("JIT membership: recovered from webhook race user=%s org=%s", user.email, clerk_org_id)
                 elif membership.status != "active":
                     membership.status = "active"
                     db.add(membership)
