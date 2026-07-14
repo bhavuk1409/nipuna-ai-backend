@@ -45,7 +45,7 @@ async def send_role_change_email(
                     {
                         "content": base64_data,
                         "filename": f"logo.{ext}",
-                        "content_id": "logo_cid"
+                        "id": "logo_cid"
                     }
                 ]
                 email_logo_src = "cid:logo_cid"
