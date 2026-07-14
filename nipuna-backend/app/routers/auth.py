@@ -90,6 +90,26 @@ async def get_current_user_profile(
     active_logo_url = None
     if active_org is not None:
         active_logo_url = active_org.logo_url
+        if active_org.clerk_org_id and active_org.clerk_org_id.startswith("org_"):
+            # If the logo is missing or contains the default initials image, fetch from Clerk
+            if not active_logo_url or "img.clerk.com" in active_logo_url:
+                try:
+                    from app.services.clerk import get_clerk_organization
+                    settings = get_settings()
+                    clerk_org_data = await get_clerk_organization(active_org.clerk_org_id, settings.clerk_secret_key)
+                    if clerk_org_data:
+                        new_logo = clerk_org_data.get("logo_url") or clerk_org_data.get("image_url")
+                        if new_logo and new_logo != active_logo_url:
+                            active_org.logo_url = new_logo
+                            db.add(active_org)
+                            await db.commit()
+                            active_logo_url = new_logo
+                            # Also update the returned memberships list
+                            for m in memberships:
+                                if m.org_id == active_org.id:
+                                    m.logo_url = new_logo
+                except Exception as sync_err:
+                    logger.warning("JIT logo sync in /me failed: %s", sync_err)
 
     for m in memberships:
         if m.is_active:
