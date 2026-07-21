@@ -1,20 +1,38 @@
-import json
+"""Vector store facade.
+
+The primary RAG path is now ``app.services.ai.pgvector_store``. This
+module exists as a thin facade so the singleton import in
+``app.routers.chat`` keeps working without a session-parameter
+rewrite. New code should import ``pgvector_store`` directly and pass
+the session explicitly.
+
+The OpenSearch Serverless code is gone from the live path. The
+deprecated stub lives in ``_legacy_opensearch`` and is never imported
+unless an operator sets ``OPENSEARCH_ENABLED=true`` in the future.
+"""
+
+from __future__ import annotations
+
 import logging
+from typing import Any
 from uuid import UUID
+
+from app.services.ai import pgvector_store
 
 logger = logging.getLogger(__name__)
 
 
 class VectorStore:
-    def __init__(self) -> None:
-        self._client = None
+    """Compat shim — the real work is in ``pgvector_store``.
 
-    @property
-    def client(self):
-        if self._client is None:
-            import boto3
-            self._client = boto3.client("opensearchserverless", region_name="ap-south-1")
-        return self._client
+    The OpenSearch implementation is gone. The class exists only to
+    keep ``app.routers.chat`` importable. New code should call
+    ``pgvector_store.upsert`` / ``pgvector_store.search`` directly
+    with the request-scoped session.
+    """
+
+    def __init__(self) -> None:
+        self._impl = pgvector_store
 
     async def upsert(
         self,
@@ -23,107 +41,27 @@ class VectorStore:
         text: str,
         embedding: list[float],
     ) -> None:
-        index_name = f"nipuna-vectors-{org_id}"
-        await self._ensure_index(org_id, len(embedding))
-
-        import httpx
-        from app.config import get_settings
-
-        settings = get_settings()
-        endpoint = await self._get_collection_endpoint()
-
-        document = {
-            "org_id": str(org_id),
-            "doc_id": doc_id,
-            "text": text,
-            "embedding": embedding,
-            "created_at": None,
-        }
-
-        async with httpx.AsyncClient() as client:
-            try:
-                await client.post(
-                    f"{endpoint}/{index_name}/_doc/{doc_id}",
-                    json=document,
-                )
-            except Exception as exc:
-                logger.warning("Vector upsert failed: %s", exc)
+        raise RuntimeError(
+            "vector_store.upsert is a compat shim. "
+            "Use pgvector_store.upsert(db=..., org_id=..., ...) directly."
+        )
 
     async def search(
         self,
         org_id: str | UUID,
         query_embedding: list[float],
         top_k: int = 5,
-    ) -> list[dict]:
-        index_name = f"nipuna-vectors-{org_id}"
-        from app.config import get_settings
-
-        settings = get_settings()
-        endpoint = await self._get_collection_endpoint()
-
-        query = {
-            "size": top_k,
-            "query": {
-                "knn": {
-                    "embedding": {
-                        "vector": query_embedding,
-                        "k": top_k,
-                    }
-                }
-            },
-        }
-
-        import httpx
-
-        async with httpx.AsyncClient() as client:
-            try:
-                resp = await client.post(
-                    f"{endpoint}/{index_name}/_search",
-                    json=query,
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                hits = data.get("hits", {}).get("hits", [])
-                return [
-                    {
-                        "doc_id": h["_source"].get("doc_id"),
-                        "text": h["_source"].get("text"),
-                        "score": h["_score"],
-                    }
-                    for h in hits
-                ]
-            except Exception as exc:
-                logger.warning("Vector search failed: %s", exc)
-                return []
-
-    async def _ensure_index(self, org_id: str | UUID, dimension: int) -> None:
-        index_name = f"nipuna-vectors-{org_id}"
-
-        try:
-            self.client.create_index(
-                name=index_name,
-                type="knn_vector",
-                dimension=dimension,
-            )
-        except self.client.exceptions.ResourceAlreadyExistsException:
-            pass
-        except Exception:
-            pass
-
-    async def _get_collection_endpoint(self) -> str:
-        try:
-            response = self.client.batch_get_collection(
-                names=["nipuna-vectors"]
-            )
-            collections = response.get("collectionDetails", [])
-            if collections:
-                return collections[0].get("collectionEndpoint", "")
-        except Exception:
-            pass
-
-        from app.config import get_settings
-        settings = get_settings()
-        return f"https://{settings.opensearch_endpoint}" if hasattr(settings, "opensearch_endpoint") and settings.opensearch_endpoint else ""
+    ) -> list[dict[str, Any]]:
+        raise RuntimeError(
+            "vector_store.search is a compat shim. "
+            "Use pgvector_store.search(db=..., org_id=..., ...) directly."
+        )
 
 
+# Backwards-compat singleton. Imports that only need the type still
+# resolve; the methods raise so any *call* surfaces a clear migration
+# message instead of silently using a dead path.
 vector_store = VectorStore()
+
+
+__all__ = ["VectorStore", "vector_store"]

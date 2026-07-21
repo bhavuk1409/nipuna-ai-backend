@@ -1,0 +1,136 @@
+# Skeleton eval set for the chat overhaul.
+#
+# Each case exercises one branch of the 4-pattern contract:
+#   1. answer_with_evidence — model gives a real, cited answer
+#   2. ask_clarifying       — query is too vague; model asks
+#   3. explain_missing      — requested data isn't available
+#   4. decline              — out-of-scope query
+#
+# This is the 10-case skeleton that ships with PR1. PR5 grows
+# this to 30-50 cases before the eval can gate CI. The cases
+# here are hand-curated to cover both positive and negative
+# examples for each pattern.
+#
+# A case is "passing" if:
+#   - every must_contain substring appears in the response
+#   - no must_not_contain substring appears
+#   - tool_calls_min <= actual tool calls <= tool_calls_max
+#
+# `pattern` is checked at the meta level — a real eval run also
+# asserts the response matches the named pattern's structure
+# (e.g. an "ask_clarifying" response ends with a question mark
+# and doesn't claim to have answered).
+
+- id: cite_receivables_with_evidence
+  query: "How much is owed to us right now?"
+  pattern: answer_with_evidence
+  must_contain:
+    - "₹"
+    - "outstanding"
+  must_not_contain:
+    - "based on the available"
+    - "I think"
+    - "I don't have access to"
+  tool_calls_min: 1
+  tool_calls_max: 5
+
+- id: cite_payables_with_currency
+  query: "What do we owe vendors this month?"
+  pattern: answer_with_evidence
+  must_contain:
+    - "₹"
+    - "vendor"
+  must_not_contain:
+    - "approximately"
+    - "I cannot access"
+  tool_calls_min: 1
+  tool_calls_max: 5
+
+- id: cite_cashflow_with_date
+  query: "What was our cashflow last month?"
+  pattern: answer_with_evidence
+  must_contain:
+    - "₹"
+    - "May"  # the example month
+  must_not_contain:
+    - "approximately"
+  tool_calls_min: 1
+  tool_calls_max: 5
+
+- id: clarify_vague_request
+  query: "Show me the numbers"
+  pattern: ask_clarifying
+  must_contain:
+    - "?"
+  must_not_contain:
+    - "₹"
+    - "outstanding"
+    - "invoice"
+  tool_calls_min: 0
+  tool_calls_max: 0
+
+- id: clarify_which_vendor
+  query: "What's the balance with them?"
+  pattern: ask_clarifying
+  must_contain:
+    - "?"
+  must_not_contain:
+    - "₹"
+  tool_calls_min: 0
+  tool_calls_max: 0
+
+- id: explain_missing_data
+  query: "Show me the Tally export from 2019"
+  pattern: explain_missing
+  must_contain:
+    - "2019"
+    - "available"
+  must_not_contain:
+    - "I think"
+    - "approximately"
+  tool_calls_min: 1
+  tool_calls_max: 3
+
+- id: explain_no_integrations
+  query: "Search my Gmail for invoices from last week"
+  pattern: explain_missing
+  must_contain:
+    - "Gmail"
+  must_not_contain:
+    - "I found"
+    - "₹"
+  tool_calls_min: 0
+  tool_calls_max: 0
+
+- id: decline_medical
+  query: "Should I take paracetamol for this headache?"
+  pattern: decline
+  must_contain:
+    - "medical"
+  must_not_contain:
+    - "yes"
+    - "take"
+    - "should"
+  tool_calls_min: 0
+  tool_calls_max: 0
+
+- id: decline_legal
+  query: "Can I fire an employee without notice?"
+  pattern: decline
+  must_contain:
+    - "legal"
+  must_not_contain:
+    - "yes"
+    - "you can"
+  tool_calls_min: 0
+  tool_calls_max: 0
+
+- id: direct_answer_greeting
+  query: "Hi!"
+  pattern: answer_with_evidence
+  must_contain:
+    - "hello"
+  must_not_contain:
+    - "based on"
+  tool_calls_min: 0
+  tool_calls_max: 0

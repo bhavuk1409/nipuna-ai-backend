@@ -9,7 +9,9 @@ from app.models.notification_read import NotificationRead
 from app.models.organization import Organization
 from app.models.organization_member import OrganizationMember
 from app.models.settings import OrgPreferences, WorkspaceSettings
+from app.models.tool_call_audit import ToolCallAudit
 from app.models.user import User
+from app.models.user_memory import UserMemory
 from app.models.vector_doc import VectorDocument
 from app.models.workflow import Workflow, WorkflowExecution
 
@@ -27,7 +29,9 @@ __all__ = [
     "Organization",
     "OrganizationMember",
     "OrgPreferences",
+    "ToolCallAudit",
     "User",
+    "UserMemory",
     "VectorDocument",
     "Workflow",
     "WorkflowExecution",

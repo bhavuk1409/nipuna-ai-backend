@@ -4,6 +4,14 @@ import sys
 # Force tests to use local SQLite test database
 os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///test.db"
 os.environ["ENV"] = "test"
+# A dummy 64-hex-char key so the encryption module can import
+# without raising on a fresh checkout. The encryption migration
+# uses this if present; tests don't exercise the real Fernet
+# roundtrip except in test_message_encryption.py.
+os.environ.setdefault(
+    "ENCRYPTION_KEY",
+    "0" * 64,
+)
 
 import pytest
 import pytest_asyncio

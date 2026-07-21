@@ -8,6 +8,7 @@ Endpoints:
 
 import json
 import logging
+import time
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -129,36 +130,61 @@ async def _get_or_create_default_agent(db: AsyncSession, org_id: uuid.UUID, user
     if agent:
         return agent
 
-    # If no agent exists, auto-create a default one
-    # Note: flush() is sufficient here - the caller owns the transaction and will commit
+    # If no agent exists, auto-create a default one from the
+    # `general_assistant` template. The template owns name, domain,
+    # objective, icon, and color; the agent row records the
+    # template_id for later identification in the UI.
+    from app.services.ai.agent_templates import get_template
+    template = get_template("general_assistant")
     agent = Agent(
         org_id=org_id,
-        name="Nipuna AI",
-        domain="General Business",
-        objective="Analyze cash flow, invoices, communications, and help run business operations.",
+        name=template.name,
+        domain=template.domain,
+        objective=template.objective,
         status="active",
         created_by=user_id,
+        template_id=template.id,
+        icon=template.icon,
+        color=template.color,
     )
     db.add(agent)
     await db.flush()
     return agent
 
 
-async def _get_rag_chunks(org: Organization, query: str) -> list[dict]:
-    """Run vector search for the query; silently skip if no embedding provider configured."""
+async def _get_rag_chunks(org: Organization, query: str, db: AsyncSession) -> list[dict]:
+    """Run vector search for the query; silently skip if no embedding provider configured.
+
+    Single source of truth for "is RAG enabled?" lives on
+    ``embedding_client.enabled`` — the Groq-vs-OpenAI branch
+    previously inlined here is gone (Groq has no embeddings; the
+    check is now "do we have *any* embedding provider?").
+    """
     try:
-        from app.config import get_settings
-        settings = get_settings()
-        # Groq doesn't support embeddings — skip to avoid 404 noise
-        if (settings.llm_provider or "groq").lower() == "groq" and not settings.openai_api_key:
+        from app.services.ai.embedding_client import embedding_client
+        from app.services.ai import pgvector_store
+
+        if not embedding_client.enabled:
             return []
 
-        from app.services.ai.embedding_client import embedding_client
-        from app.services.ai.vector_store import vector_store
-
         embedding = await embedding_client.embed(query)
-        if embedding:
-            return await vector_store.search(str(org.id), embedding)
+        if not embedding:
+            return []
+
+        hits = await pgvector_store.search(
+            db=db,
+            org_id=org.id,
+            query_embedding=embedding,
+            top_k=5,
+        )
+        return [
+            {
+                "doc_id": h.doc_id,
+                "text": h.text,
+                "score": h.score,
+            }
+            for h in hits
+        ]
     except Exception as exc:
         logger.debug("RAG search failed (non-fatal): %s", exc)
     return []
@@ -200,6 +226,17 @@ async def send_message(
     db.add(user_msg)
     await db.flush()
 
+    # PR4 — generate a sidebar title from the first user message,
+    # fire-and-forget. Pure function, no LLM. The block is inside
+    # the (sync) request scope so we just do it inline; the result
+    # is a single UPDATE.
+    if not conversation.title and body.content:
+        from app.services.conversations.titler import generate_title
+        new_title = generate_title(body.content)
+        if new_title:
+            conversation.title = new_title
+            await db.flush()
+
     # Load full history
     history_result = await db.execute(
         select(Message)
@@ -209,7 +246,17 @@ async def send_message(
     history = list(history_result.scalars().all())
 
     # RAG search for relevant knowledge-base chunks
-    rag_chunks = await _get_rag_chunks(org, body.content)
+    rag_chunks = await _get_rag_chunks(org, body.content, db)
+
+    # PR4 — fetch the user's top memories and render the
+    # ``KNOWN FACTS ABOUT THIS USER`` block for the system prompt.
+    from app.services.memory import manager as memory_manager
+    memory_facts = await memory_manager.facts_for_injection(
+        db,
+        user_id=str(user.id),
+        org_id=str(org.id),
+    )
+    memory_block = memory_manager.build_memory_block(memory_facts)
 
     # Run the LangGraph zero-hallucination pipeline
     pipeline_result: PipelineResult = await run_langgraph_pipeline(
@@ -225,6 +272,7 @@ async def send_message(
         currency=body.currency,
         memory=body.memory,
         attachments=body.attachments,
+        memory_block=memory_block,
     )
 
     # Save final AI response
@@ -244,6 +292,31 @@ async def send_message(
 
     await db.commit()
 
+    # PR4 — fire-and-forget memory extraction. Runs in a fresh DB
+    # session so the request's commit above is visible; the
+    # extractor's own commit runs in its own session. Failures are
+    # swallowed (best-effort).
+    import asyncio
+    try:
+        from app.services.memory import extractor as memory_extractor
+        from app.database import AsyncSessionLocal
+
+        async def _run_extractor():
+            try:
+                async with AsyncSessionLocal() as ex_db:
+                    await memory_extractor.extract_and_persist(
+                        ex_db,
+                        user_id=str(user.id),
+                        org_id=str(org.id),
+                        conversation_id=str(conversation.id),
+                    )
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("Memory extractor (non-stream) failed: %s", exc)
+
+        asyncio.create_task(_run_extractor())
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Could not schedule memory extractor: %s", exc)
+
     return ChatResponse(
         content=pipeline_result.answer,
         conversation_id=str(conversation.id),
@@ -255,21 +328,54 @@ async def send_message(
 # GET /chat/stream — Server-Sent Events
 # ──────────────────────────────────────────────────────────────────
 
+# Heartbeat: how often (in seconds) to emit a `: ping\n\n` comment
+# while the queue is empty and the background task is still
+# running. This keeps proxies (nginx, CloudFront) from closing the
+# SSE connection during long tool execution.
+HEARTBEAT_INTERVAL_S = 15.0
+
+# Incremental persistence: commit partial assistant messages to the
+# DB every N tokens so a disconnect doesn't lose the whole answer.
+INCREMENTAL_PERSIST_EVERY_N_TOKENS = 100
+
+# First-non-trivial-event deduct: the credit deduct happens on the
+# first of (a) this many tokens emitted, (b) a successful tool
+# call, or (c) a persisted assistant message >= this many chars.
+# Below these thresholds, the turn is "free" (the user got nothing
+# of value).
+CREDIT_DEDUCT_MIN_TOKENS = 5
+CREDIT_DEDUCT_MIN_MESSAGE_CHARS = 50
+
+
 @router.post("/stream")
 async def stream_message(
     body: ChatRequest,
+    request: Request,
     org: Organization = Depends(get_current_org),
     user: User = Depends(require_chat_permission),
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    SSE endpoint. Frontend connects with EventSource and receives events:
+    """SSE endpoint. Frontend connects with EventSource and receives events:
+
       data: {"type": "thinking", "content": "..."}
       data: {"type": "tool_start", "tool_name": "gmail_search_emails"}
       data: {"type": "tool_end",   "tool_name": "gmail_search_emails", "tool_result": "..."}
       data: {"type": "token",      "content": "..."}
       data: {"type": "done",       "content": "...", "conversation_id": "..."}
       data: {"type": "error",      "content": "..."}
+
+    PR3 hardening:
+      - `request.is_disconnected()` polled every 50ms inside the
+        event generator. On disconnect, the cancel_event is set so
+        the background pipeline aborts at the next node boundary.
+      - `: ping\\n\\n` heartbeat comments emitted every 15s while
+        the queue is empty (i.e. during long tool execution).
+      - Assistant message persisted incrementally every
+        INCREMENTAL_PERSIST_EVERY_N_TOKENS tokens; on disconnect the
+        partial answer survives in the DB with `truncated_at = now()`.
+      - Credit deduct happens on the first non-trivial event (≥5
+        tokens, successful tool, or persisted message ≥50 chars).
+        Once deducted, the turn is billed even on disconnect.
     """
     if org.ai_credits <= 0:
         async def credits_err():
@@ -295,6 +401,23 @@ async def stream_message(
     db.add(user_msg)
     await db.flush()
 
+    # PR4 — generate a sidebar title from the first user message.
+    if not conversation.title and body.content:
+        from app.services.conversations.titler import generate_title
+        new_title = generate_title(body.content)
+        if new_title:
+            conversation.title = new_title
+            await db.flush()
+
+    # PR4 — fetch the user's top memories for the system prompt.
+    from app.services.memory import manager as memory_manager
+    memory_facts = await memory_manager.facts_for_injection(
+        db,
+        user_id=str(user.id),
+        org_id=str(org.id),
+    )
+    memory_block = memory_manager.build_memory_block(memory_facts)
+
     # Load history
     history_result = await db.execute(
         select(Message)
@@ -302,11 +425,74 @@ async def stream_message(
         .order_by(Message.created_at)
     )
     history = list(history_result.scalars().all())
-    rag_chunks = await _get_rag_chunks(org, body.content)
+    rag_chunks = await _get_rag_chunks(org, body.content, db)
+
+    # Set up the cancel signal and the pre-pipeline bookkeeping.
+    import asyncio
+    cancel_event = asyncio.Event()
+    # Pre-create the assistant message row so we can update it
+    # incrementally as tokens arrive. The row starts empty; on
+    # disconnect, we set `truncated_at = now()` and commit whatever
+    # we have so the user sees a partial answer.
+    assistant_msg = Message(
+        conversation_id=conversation.id,
+        role="assistant",
+        content="",
+        tokens_used=0,
+    )
+    db.add(assistant_msg)
+    await db.flush()
 
     async def event_generator():
+        nonlocal_assistant_msg = assistant_msg
+        token_buffer: list[str] = []
+        tokens_emitted = 0
+        credit_deducted = False
+        last_persist_at_tokens = 0
+        last_heartbeat = time.monotonic()
+        disconnected = False
         final_answer = ""
         tool_calls_made = 0
+
+        async def _deduct_credit_once() -> None:
+            """Deduct one credit at most once per turn. Idempotent
+            on the same connection — a re-call is a no-op.
+            """
+            nonlocal credit_deducted
+            if credit_deducted:
+                return
+            credit_deducted = True
+            from sqlalchemy import text
+            await db.execute(
+                text(
+                    "UPDATE organizations SET ai_credits = ai_credits - 1 "
+                    "WHERE id = :org_id AND ai_credits > 0"
+                ),
+                {"org_id": org.id},
+            )
+            logger.debug("Credit deducted for org=%s turn=%s", org.id, conversation.id)
+
+        async def _persist_assistant_partial() -> None:
+            """Commit whatever tokens are in the buffer to the DB
+            so a disconnect doesn't lose the work.
+            """
+            if not token_buffer:
+                return
+            new_content = (nonlocal_assistant_msg.content or "") + "".join(token_buffer)
+            token_buffer.clear()
+            nonlocal_assistant_msg.content = new_content
+            nonlocal_assistant_msg.tokens_used = (
+                (nonlocal_assistant_msg.tokens_used or 0) + tokens_emitted
+            )
+            try:
+                await db.commit()
+            except Exception as exc:
+                logger.warning("Incremental persist failed: %s", exc)
+                try:
+                    await db.rollback()
+                except Exception:
+                    pass
+
         try:
             async for event in run_langgraph_pipeline_stream(
                 org=org,
@@ -321,11 +507,50 @@ async def stream_message(
                 currency=body.currency,
                 memory=body.memory,
                 attachments=body.attachments,
+                cancel_event=cancel_event,
+                memory_block=memory_block,
             ):
-                # We can't check request.is_disconnected() easily inside the generator 
-                # without passing the request object, but yielding to a disconnected client
-                # will raise a ClientDisconnect exception.
+                # Check disconnect on every event. Setting the
+                # cancel_event here lets the background task exit
+                # at the next node boundary.
+                if await request.is_disconnected():
+                    logger.info("SSE client disconnected; setting cancel_event")
+                    cancel_event.set()
+                    disconnected = True
+                    break
 
+                # First-non-trivial-event deduct.
+                if not credit_deducted:
+                    if event.type == "token":
+                        tokens_emitted += 1
+                        if tokens_emitted >= CREDIT_DEDUCT_MIN_TOKENS:
+                            await _deduct_credit_once()
+                    elif event.type == "tool_end":
+                        # tool_end with a non-error result counts
+                        # as non-trivial.
+                        if event.tool_result and "ERROR" not in (event.tool_result or ""):
+                            await _deduct_credit_once()
+
+                # Buffer tokens for incremental persist.
+                if event.type == "token" and event.content:
+                    token_buffer.append(event.content)
+
+                # Periodically persist partial assistant content.
+                if (
+                    event.type == "token"
+                    and tokens_emitted - last_persist_at_tokens
+                    >= INCREMENTAL_PERSIST_EVERY_N_TOKENS
+                ):
+                    await _persist_assistant_partial()
+                    last_persist_at_tokens = tokens_emitted
+
+                # On a successful tool, also persist so the partial
+                # answer survives a disconnect mid-tool.
+                if event.type == "tool_end" and token_buffer:
+                    await _persist_assistant_partial()
+                    last_persist_at_tokens = tokens_emitted
+
+                # Emit the event to the SSE client.
                 payload = {
                     "type": event.type,
                     "content": event.content,
@@ -339,29 +564,169 @@ async def stream_message(
                 if event.type == "done":
                     final_answer = event.content or ""
                     tool_calls_made = event.tool_calls_made or 0
+                    # PR4 — fire-and-forget memory extraction after
+                    # the conversation completes a real turn. We
+                    # only schedule if the turn actually produced
+                    # something the user could read (≥50 chars);
+                    # otherwise we'd extract from greetings.
+                    if final_answer and len(final_answer) >= 50:
+                        try:
+                            from app.services.memory import extractor as memory_extractor
+                            from app.database import AsyncSessionLocal
+                            import asyncio
 
-            # Persist final answer + deduct credit
-            if final_answer:
-                assistant_msg = Message(
-                    conversation_id=conversation.id,
-                    role="assistant",
-                    content=final_answer,
-                )
-                db.add(assistant_msg)
-                
-                from sqlalchemy import text
+                            async def _run_extractor():
+                                try:
+                                    async with AsyncSessionLocal() as ex_db:
+                                        await memory_extractor.extract_and_persist(
+                                            ex_db,
+                                            user_id=str(user.id),
+                                            org_id=str(org.id),
+                                            conversation_id=str(conversation.id),
+                                        )
+                                except Exception as exc:  # noqa: BLE001
+                                    logger.debug("Memory extractor (stream) failed: %s", exc)
+
+                            asyncio.create_task(_run_extractor())
+                        except Exception as exc:  # noqa: BLE001
+                            logger.debug("Could not schedule memory extractor: %s", exc)
+
+                # First-non-trivial-event deduct on persisted
+                # message (in case we never hit a token / tool
+                # threshold but the message is substantive).
+                if (
+                    not credit_deducted
+                    and event.type == "done"
+                    and final_answer
+                    and len(final_answer) >= CREDIT_DEDUCT_MIN_MESSAGE_CHARS
+                ):
+                    await _deduct_credit_once()
+
+            # Drain the buffer at the end of the stream.
+            await _persist_assistant_partial()
+
+            # Set conversation.last_message_at so the sidebar
+            # list (added in PR4) shows the right order.
+            try:
+                from sqlalchemy import update
+                from app.models.conversation import Conversation
                 await db.execute(
-                    text("UPDATE organizations SET ai_credits = ai_credits - 1 WHERE id = :org_id AND ai_credits > 0"),
-                    {"org_id": org.id}
+                    update(Conversation)
+                    .where(Conversation.id == conversation.id)
+                    .values(last_message_at=nonlocal_assistant_msg.created_at or None)
                 )
                 await db.commit()
+            except Exception as exc:
+                logger.debug("last_message_at update failed: %s", exc)
 
+        except asyncio.CancelledError:
+            disconnected = True
+            cancel_event.set()
+            logger.info("SSE generator cancelled (likely disconnect)")
         except Exception as exc:
             logger.error("SSE pipeline error: %s", exc, exc_info=True)
             yield "data: " + json.dumps({"type": "error", "content": str(exc)}) + "\n\n"
 
+        finally:
+            # On disconnect, mark the message as truncated so the
+            # FE can render "...response cut off" and the user
+            # knows it's not a complete answer. The credit deduct
+            # is preserved — we don't refund.
+            if disconnected or cancel_event.is_set():
+                try:
+                    from datetime import datetime, timezone
+                    from sqlalchemy import update
+                    await db.execute(
+                        update(Message)
+                        .where(Message.id == nonlocal_assistant_msg.id)
+                        .values(
+                            truncated_at=datetime.now(timezone.utc),
+                            content=nonlocal_assistant_msg.content,
+                        )
+                    )
+                    await db.commit()
+                    logger.info(
+                        "Marked assistant message %s as truncated for conv=%s",
+                        nonlocal_assistant_msg.id, conversation.id,
+                    )
+                except Exception as exc:
+                    logger.warning("Failed to set truncated_at: %s", exc)
+                    try:
+                        await db.rollback()
+                    except Exception:
+                        pass
+
+    # Wraps the event_generator so we can also emit heartbeats
+    # when the queue is empty (long tool execution). The wrapper
+    # races the next event against the heartbeat, but on a
+    # heartbeat it does NOT cancel the inner event_task — that
+    # would tear down the long-running generator. Instead we
+    # leave the task running and just emit a ping. The next
+    # iteration of the loop re-awaits the same task.
+    async def wrapped_event_generator():
+        inner = event_generator()
+        inner_task: asyncio.Task | None = None
+
+        async def _start_next() -> asyncio.Task:
+            """Wrap the inner generator's __anext__ in a task so
+            we can race it against the heartbeat.
+            """
+            return asyncio.create_task(inner.__anext__())
+
+        inner_task = await _start_next()
+
+        while True:
+            try:
+                heartbeat_task = asyncio.create_task(
+                    asyncio.sleep(HEARTBEAT_INTERVAL_S)
+                )
+                done, pending = await asyncio.wait(
+                    {inner_task, heartbeat_task},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+
+                if inner_task in done:
+                    # Cancel the heartbeat (still pending) and
+                    # yield the result.
+                    heartbeat_task.cancel()
+                    try:
+                        await heartbeat_task
+                    except (asyncio.CancelledError, Exception):
+                        pass
+                    try:
+                        ev = inner_task.result()
+                    except StopAsyncIteration:
+                        break
+                    except asyncio.CancelledError:
+                        # Inner was cancelled (e.g. disconnect).
+                        break
+                    yield ev
+                    # Start a fresh task for the next event.
+                    inner_task = await _start_next()
+                else:
+                    # Heartbeat fired; inner is still running.
+                    # Emit a ping and continue.
+                    yield ": ping\n\n"
+                    # heartbeat_task is done; don't cancel inner.
+            except StopAsyncIteration:
+                break
+            except asyncio.CancelledError:
+                if inner_task is not None and not inner_task.done():
+                    inner_task.cancel()
+                    try:
+                        await inner_task
+                    except (asyncio.CancelledError, Exception):
+                        pass
+                break
+            except Exception as exc:
+                logger.error("SSE wrapper error: %s", exc)
+                yield "data: " + json.dumps({"type": "error", "content": str(exc)}) + "\n\n"
+                if inner_task is not None and not inner_task.done():
+                    inner_task.cancel()
+                break
+
     return StreamingResponse(
-        event_generator(),
+        wrapped_event_generator(),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

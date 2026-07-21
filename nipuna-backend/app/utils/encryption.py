@@ -24,3 +24,22 @@ def encrypt(plaintext: str) -> str:
 def decrypt(token: str) -> str:
     f = _get_fernet()
     return f.decrypt(token.encode()).decode()
+
+
+def encrypt_bytes(plaintext: str) -> bytes:
+    """Return the Fernet token as raw bytes — for storage in
+    ``LargeBinary`` columns (e.g. ``user_memories.value_encrypted``,
+    ``messages.content_encrypted``). The on-disk form is the
+    url-safe base64 string but stored as bytes so a database dump
+    doesn't render it as readable text.
+    """
+    return encrypt(plaintext).encode("utf-8")
+
+
+def decrypt_bytes(token: bytes) -> str:
+    """Inverse of :func:`encrypt_bytes` — accepts the ``LargeBinary``
+    bytes form, returns the plaintext.
+    """
+    if isinstance(token, (bytes, bytearray)):
+        token = token.decode("utf-8", errors="replace")
+    return decrypt(token)
