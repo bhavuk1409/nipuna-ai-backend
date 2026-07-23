@@ -435,12 +435,13 @@ async def create_invite(
     dashboard_link = f"{settings.frontend_url.rstrip('/')}/dashboard"
 
     sign_up_url = f"{settings.frontend_url.rstrip('/')}/sign-up"
+    sign_in_url = f"{settings.frontend_url.rstrip('/')}/sign-in"
 
     if is_existing_user:
-        # Existing Nipuna AI user: redirect email Accept button to sign-up / dashboard.
-        # DO NOT send invite_code in email — an in-app invitation pop-up handles it directly.
+        # Existing Nipuna AI user: send Resend email pointing Accept button to Sign In page.
+        # DO NOT send invite_code in email — in-app notification pop-up handles it directly.
         logger.info(
-            "create_invite: user %s is already on Nipuna AI; sending email without code (in-app pop-up active)",
+            "create_invite: user %s is already on Nipuna AI; sending Resend email to sign-in without code (in-app pop-up active)",
             body.email,
         )
         await send_team_invite_email(
@@ -448,32 +449,20 @@ async def create_invite(
             org_name=org.name,
             inviter_name=_display_name(user, user.email),
             role=body.role,
-            share_link=sign_up_url,
+            share_link=sign_in_url,  # Redirects to sign-in page
             logo_url=org.logo_url,
             invite_code=None,  # Existing user does not receive code
         )
     else:
-        # New user (not on Nipuna AI): send invitation email with 6-digit code and pre-filled sign-up link
+        # New user (not on Nipuna AI): send Resend email with 6-digit code and Accept button pointing to Sign Up page
         new_user_share_link = f"{sign_up_url}?invite_code={generated_token}"
-        if not is_dev_org:
-            try:
-                await send_clerk_org_invitation(
-                    clerk_org_id=org.clerk_org_id,
-                    email=body.email,
-                    role=body.role,
-                    inviter_user_id=user.clerk_user_id,
-                    redirect_url=new_user_share_link,
-                    secret_key=settings.clerk_secret_key,
-                )
-            except ClerkAPIError as exc:
-                logger.warning("Clerk org invitation warning: %s", exc)
 
         await send_team_invite_email(
             to_email=body.email,
             org_name=org.name,
             inviter_name=_display_name(user, user.email),
             role=body.role,
-            share_link=new_user_share_link,
+            share_link=new_user_share_link,  # Redirects to sign-up page
             logo_url=org.logo_url,
             invite_code=generated_token,  # New user receives 6-digit code
         )
