@@ -441,12 +441,13 @@ async def create_invite(
     # Build the dashboard link for existing users to find their notification
     dashboard_link = f"{settings.frontend_url.rstrip('/')}/dashboard"
 
+    sign_up_url = f"{settings.frontend_url.rstrip('/')}/sign-up"
+
     if existing_user is not None:
-        # Existing Nipuna AI user: send a Resend email pointing them
-        # to their notification bell. Best-effort — don't fail the
-        # invite if email delivery fails.
+        # Existing Nipuna AI user: redirect email Accept button to sign-up / dashboard.
+        # DO NOT send invite_code in email — an in-app invitation pop-up handles it directly.
         logger.info(
-            "create_invite: existing user %s; sending Resend notification email",
+            "create_invite: existing user %s; sending email without code (in-app pop-up active)",
             body.email,
         )
         await send_team_invite_email(
@@ -454,19 +455,20 @@ async def create_invite(
             org_name=org.name,
             inviter_name=_display_name(user, user.email),
             role=body.role,
-            share_link=dashboard_link,
+            share_link=sign_up_url,
             logo_url=org.logo_url,
-            invite_code=generated_token,
+            invite_code=None,  # Existing user does not receive code
         )
     elif existing_user is None and existing_clerk_user_id is None and not is_dev_org:
-        # New email, real Clerk org — send a real invitation email via Clerk AND Resend for invite code
+        # New user: send invitation email with 6-digit code and pre-filled sign-up link
+        new_user_share_link = f"{sign_up_url}?invite_code={generated_token}"
         try:
             await send_clerk_org_invitation(
                 clerk_org_id=org.clerk_org_id,
                 email=body.email,
                 role=body.role,
                 inviter_user_id=user.clerk_user_id,
-                redirect_url=f"{settings.frontend_url}/dashboard",
+                redirect_url=new_user_share_link,
                 secret_key=settings.clerk_secret_key,
             )
         except ClerkAPIError as exc:
@@ -477,17 +479,12 @@ async def create_invite(
             org_name=org.name,
             inviter_name=_display_name(user, user.email),
             role=body.role,
-            share_link=f"{settings.frontend_url.rstrip('/')}/sign-up",
+            share_link=new_user_share_link,
             logo_url=org.logo_url,
-            invite_code=generated_token,
+            invite_code=generated_token,  # New user receives 6-digit code
         )
     elif is_dev_org and existing_clerk_user_id is None and existing_user is None:
-        share_link = build_dev_share_link(
-            frontend_url=settings.frontend_url,
-            org_id=str(org.id),
-            email=body.email,
-            org_name=org.name,
-        )
+        new_user_share_link = f"{sign_up_url}?invite_code={generated_token}"
         logger.info(
             "create_invite: dev org %s (clerk_org_id=%s); emailing share link to %s",
             org.id, org.clerk_org_id, body.email,
@@ -497,7 +494,7 @@ async def create_invite(
             org_name=org.name,
             inviter_name=_display_name(user, user.email),
             role=body.role,
-            share_link=share_link,
+            share_link=new_user_share_link,
             logo_url=org.logo_url,
             invite_code=generated_token,
         )
