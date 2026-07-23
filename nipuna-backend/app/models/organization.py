@@ -38,6 +38,9 @@ class Organization(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     seats_max: Mapped[int] = mapped_column(Integer, nullable=False, server_default="5")
     ai_credits: Mapped[int] = mapped_column(Integer, nullable=False, server_default="100")
     logo_url: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Collected during onboarding; nullable for orgs created before this field existed.
+    industry: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    team_size: Mapped[str | None] = mapped_column(String(50), nullable=True)
 
     # Many-to-many with User through OrganizationMember. The cascade is
     # `all, delete-orphan` at the SQLAlchemy level (deleting an org

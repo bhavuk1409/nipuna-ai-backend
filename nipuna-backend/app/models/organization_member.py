@@ -34,10 +34,13 @@ Postgres), so we need the explicit partial index for that case.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from typing import TYPE_CHECKING
+
 
 from sqlalchemy import (
     CheckConstraint,
+    DateTime,
     Enum,
     ForeignKey,
     Index,
@@ -100,8 +103,28 @@ class OrganizationMember(UUIDPrimaryKeyMixin, TimestampMixin, UpdatedAtMixin, Ba
         server_default="active",
     )
 
+    # ── Invite token fields ──────────────────────────────────────────────────
+    # invite_token: a short secrets.token_urlsafe(32) string generated when
+    # the admin creates an invite. The frontend shows this as the "invite code"
+    # the new user enters during onboarding. NULL for memberships created by
+    # the Clerk webhook (i.e., admin-to-self or accepted Clerk invitations).
+    invite_token: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, unique=True, index=True
+    )
+    # Optional expiry for the token (default: no expiry).
+    invite_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # Who generated this invite (for audit / display).
+    invited_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
     organization: Mapped["Organization"] = relationship(back_populates="memberships")
-    user: Mapped["User | None"] = relationship(back_populates="memberships")
+    user: Mapped["User | None"] = relationship(back_populates="memberships", foreign_keys="[OrganizationMember.user_id]")
 
     __table_args__ = (
         # A user can only have one membership per org. (The `user_id IS

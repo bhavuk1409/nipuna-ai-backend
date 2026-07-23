@@ -49,6 +49,7 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     memberships: Mapped[list["OrganizationMember"]] = relationship(
         back_populates="user",
         cascade="all, delete-orphan",
+        foreign_keys="[OrganizationMember.user_id]",
     )
 
     created_agents: Mapped[list["Agent"]] = relationship(back_populates="creator")

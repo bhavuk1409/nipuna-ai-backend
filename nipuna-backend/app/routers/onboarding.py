@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from jose import JWTError, jwt
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional
@@ -18,6 +19,13 @@ from app.schemas.auth import OnboardingRequest, OnboardingResponse
 from app.config import get_settings
 
 router = APIRouter(prefix="/onboarding", tags=["onboarding"])
+
+
+class SkipOnboardingResponse(BaseModel):
+    status: str
+    org_id: str
+
+
 
 
 @router.post("", response_model=OnboardingResponse)
@@ -400,3 +408,110 @@ async def create_onboarding(
         )
 
     return OnboardingResponse(status="ok", org_id=str(org.id))
+
+
+@router.post("/skip", response_model=SkipOnboardingResponse)
+async def skip_onboarding(
+    token: Optional[str] = Depends(oauth2_scheme),
+    db: AsyncSession = Depends(get_db),
+) -> SkipOnboardingResponse:
+    """Skip org setup and create a placeholder 'My Workspace' so the user
+    can access the dashboard immediately.
+
+    The dashboard detects orgs with a `manual_<clerk_user_id>` clerk_org_id
+    and displays a persistent setup banner prompting the user to complete
+    their organization details or enter an invite code.
+
+    Idempotent: calling this multiple times returns the same placeholder org.
+    """
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    try:
+        jwks = await get_jwks()
+        claims = jwt.decode(
+            token, jwks, algorithms=["RS256"], options={"verify_aud": False}
+        )
+    except JWTError as exc:
+        logger.warning("JWT decode failed in skip_onboarding: %s", exc)
+        raise HTTPException(status_code=401, detail=f"Invalid token: {exc}")
+
+    clerk_user_id: str | None = claims.get("sub")
+    if not clerk_user_id:
+        raise HTTPException(status_code=401, detail="Invalid token claims")
+
+    # ── Find or create the user row ────────────────────────────────────────
+    user_result = await db.execute(
+        select(User).where(User.clerk_user_id == clerk_user_id)
+    )
+    user = user_result.scalar_one_or_none()
+    if user is None:
+        raise HTTPException(
+            status_code=404,
+            detail="User not found. Please complete sign-up first.",
+        )
+
+    # ── Find or create the placeholder org ────────────────────────────────
+    placeholder_clerk_org_id = f"manual_{clerk_user_id}"
+
+    org_result = await db.execute(
+        select(Organization).where(
+            Organization.clerk_org_id == placeholder_clerk_org_id
+        )
+    )
+    org = org_result.scalar_one_or_none()
+
+    if org is None:
+        org = Organization(
+            clerk_org_id=placeholder_clerk_org_id,
+            name="My Workspace",
+            plan="free",
+            seats_max=5,
+            ai_credits=100,
+        )
+        db.add(org)
+        await db.flush()
+
+        db.add(WorkspaceSettings(org_id=org.id, name=org.name))
+        db.add(
+            OrgPreferences(
+                org_id=org.id,
+                approval_required=False,
+                digest_time="09:00",
+                escalation_window=24,
+            )
+        )
+        await db.flush()
+        logger.info(
+            "skip_onboarding: created placeholder org %s for user %s",
+            placeholder_clerk_org_id, user.email,
+        )
+
+    # ── Ensure admin membership ────────────────────────────────────────────
+    mem_result = await db.execute(
+        select(OrganizationMember).where(
+            OrganizationMember.user_id == user.id,
+            OrganizationMember.org_id == org.id,
+        )
+    )
+    if mem_result.scalar_one_or_none() is None:
+        db.add(
+            OrganizationMember(
+                user_id=user.id,
+                org_id=org.id,
+                email=user.email.lower(),
+                role="admin",
+                status="active",
+            )
+        )
+
+    user.active_org_id = org.id
+    db.add(user)
+    await db.commit()
+
+    logger.info(
+        "skip_onboarding: set active_org_id=%s (placeholder) for user %s",
+        org.id, user.email,
+    )
+    return SkipOnboardingResponse(status="ok", org_id=str(org.id))
+

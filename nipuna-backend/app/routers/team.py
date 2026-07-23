@@ -42,8 +42,9 @@ is demoted, the next-oldest admin inherits the owner designation.
 from __future__ import annotations
 
 import logging
+import secrets
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
 from sqlalchemy import select
@@ -73,9 +74,37 @@ from app.services.notifications.team_invite_email import (
     send_team_invite_email,
 )
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/team", tags=["team"])
 
-logger = logging.getLogger(__name__)
+
+def _generate_invite_token() -> str:
+    """Generate a clean, 6-character alphanumeric invite code containing both
+    letters and numbers (e.g. '8F92K3', 'A7X92K').
+    Uses unambiguous characters (excluding 0, O, 1, I).
+    """
+    digits = "23456789"
+    letters = "ABCDEFGHJKLMNPQRSTUVWXYZ"
+    chars = digits + letters
+    while True:
+        code = "".join(secrets.choice(chars) for _ in range(6))
+        if any(c in digits for c in code) and any(c in letters for c in code):
+            return code
+
+
+def _normalize_token_variations(raw_token: str) -> list[str]:
+    """Generate search variations for user-entered invite codes.
+    Tolerates lowercase, missing 'NIP-' prefix, extra spaces, etc.
+    """
+    clean = raw_token.strip().upper()
+    variations = [raw_token, clean]
+    if clean.startswith("NIP-"):
+        body = clean[4:]
+        variations.extend([body, f"NIP-{body}"])
+    else:
+        variations.append(f"NIP-{clean}")
+    return list(dict.fromkeys(variations))
 
 
 # ---------------------------------------------------------------------------
@@ -284,6 +313,8 @@ async def list_team(
                 sent_at=m.created_at,
                 invited_by=inviter_name,
                 dev_share_link=dev_share_link,
+                invite_code=m.invite_token,
+                expires_at=m.invite_expires_at,
             )
         )
 
@@ -403,6 +434,10 @@ async def create_invite(
                 detail=f"Could not look up the invitee: {exc}",
             ) from exc
 
+    # Generate clean, professional 8-character token & set 7-day expiration
+    generated_token = _generate_invite_token()
+    expires_at = datetime.now(timezone.utc) + timedelta(days=7)
+
     # Build the dashboard link for existing users to find their notification
     dashboard_link = f"{settings.frontend_url.rstrip('/')}/dashboard"
 
@@ -421,9 +456,10 @@ async def create_invite(
             role=body.role,
             share_link=dashboard_link,
             logo_url=org.logo_url,
+            invite_code=generated_token,
         )
     elif existing_user is None and existing_clerk_user_id is None and not is_dev_org:
-        # New email, real Clerk org — send a real invitation email.
+        # New email, real Clerk org — send a real invitation email via Clerk AND Resend for invite code
         try:
             await send_clerk_org_invitation(
                 clerk_org_id=org.clerk_org_id,
@@ -434,19 +470,18 @@ async def create_invite(
                 secret_key=settings.clerk_secret_key,
             )
         except ClerkAPIError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail=f"Failed to send invitation email: {exc}",
-            ) from exc
+            logger.warning("Clerk org invitation warning: %s", exc)
+
+        await send_team_invite_email(
+            to_email=body.email,
+            org_name=org.name,
+            inviter_name=_display_name(user, user.email),
+            role=body.role,
+            share_link=f"{settings.frontend_url.rstrip('/')}/sign-up",
+            logo_url=org.logo_url,
+            invite_code=generated_token,
+        )
     elif is_dev_org and existing_clerk_user_id is None and existing_user is None:
-        # Dev-only path: org is a `manual_*` placeholder (not a real
-        # Clerk org), so we can't ask Clerk to send a real email. We
-        # still write the membership row; the inviter can copy the
-        # self-serve share link and pass it to the invitee manually.
-        # As a UX improvement, we ALSO send the link via Resend so
-        # the invitee actually gets contacted. Email send is
-        # best-effort: if Resend isn't configured or fails, the
-        # inviter still sees the share link in the response.
         share_link = build_dev_share_link(
             frontend_url=settings.frontend_url,
             org_id=str(org.id),
@@ -464,6 +499,7 @@ async def create_invite(
             role=body.role,
             share_link=share_link,
             logo_url=org.logo_url,
+            invite_code=generated_token,
         )
 
     # Bind to a User if we already have one (the email matched an
@@ -476,6 +512,9 @@ async def create_invite(
         email=body.email.lower(),
         role=body.role,
         status="pending",
+        invite_token=generated_token,
+        invite_expires_at=expires_at,
+        invited_by_user_id=user.id,
     )
     db.add(invite)
     await db.commit()
@@ -485,16 +524,9 @@ async def create_invite(
     # legacy `User.role` / `User.status` columns were dropped in
     # step 8.)
     if existing_user is not None:
-        # If the user has no other active memberships in this org, no
-        # change to active_org_id. If they do, leave it — switching
-        # active org on invite creation would be surprising.
         db.add(existing_user)
         await db.commit()
 
-    # Dev share link (only when there is no real Clerk org to ask).
-    # `build_dev_share_link` is the single source of truth for the
-    # link shape (used by the email path above and the API response
-    # below) so the URL is consistent.
     dev_share_link: str | None = None
     delivery_note: str | None = None
     if is_dev_org and existing_user is None and existing_clerk_user_id is None:
@@ -505,12 +537,12 @@ async def create_invite(
             org_name=org.name,
         )
         delivery_note = (
-            "Dev mode: Resend email was sent to the invitee. The link "
+            "Dev mode: Resend email was sent to the invitee with invitation code. The link "
             "below is also included for manual sharing if email fails."
         )
     elif existing_user is not None:
         delivery_note = (
-            "Invitee is already a Nipuna AI user. An email notification "
+            "Invitee is already a Nipuna AI user. An email notification with invitation code "
             "has been sent, and the invitation appears in their notification bell."
         )
 
@@ -522,6 +554,8 @@ async def create_invite(
         invited_by=_display_name(user, user.email),
         dev_share_link=dev_share_link,
         delivery_note=delivery_note,
+        invite_code=invite.invite_token,
+        expires_at=invite.invite_expires_at,
     )
 
 
@@ -750,6 +784,14 @@ async def resend_invite(
     if invite.user_id is not None:
         invitee_user = await db.get(User, invite.user_id)
 
+    # Refresh / ensure token and reset 7-day expiration
+    if not invite.invite_token:
+        invite.invite_token = _generate_invite_token()
+    invite.invite_expires_at = datetime.now(timezone.utc) + timedelta(days=7)
+    db.add(invite)
+    await db.commit()
+    await db.refresh(invite)
+
     dev_share_link: str | None = None
     delivery_note: str | None = None
 
@@ -762,15 +804,10 @@ async def resend_invite(
             role=invite.role,  # type: ignore[arg-type]
             share_link=dashboard_link,
             logo_url=org.logo_url,
+            invite_code=invite.invite_token,
         )
-        delivery_note = "Invitation email re-sent."
+        delivery_note = "Invitation email re-sent with invitation code."
     elif is_dev_org:
-        # Dev-only path: no Clerk org, so no Clerk email. Build a
-        # self-serve share link and re-send it via Resend.
-        logger.info(
-            "resend_invite: dev org %s (clerk_org_id=%s); emailing share link to %s",
-            org.id, org.clerk_org_id, invite.email,
-        )
         dev_share_link = build_dev_share_link(
             frontend_url=settings.frontend_url,
             org_id=str(org.id),
@@ -783,13 +820,11 @@ async def resend_invite(
             role=invite.role,  # type: ignore[arg-type]
             share_link=dev_share_link,
             logo_url=org.logo_url,
+            invite_code=invite.invite_token,
         )
-        delivery_note = (
-            "Dev mode: Resend email re-sent to the invitee. The link "
-            "below is also included for manual sharing if email fails."
-        )
+        delivery_note = "Dev mode: Invitation email re-sent with invitation code."
     else:
-        # Real Clerk org, new email — re-fire the invitation.
+        # Real Clerk org, new email — re-fire invitation and send Resend email with invite code
         try:
             await send_clerk_org_invitation(
                 clerk_org_id=org.clerk_org_id,
@@ -799,12 +834,19 @@ async def resend_invite(
                 redirect_url=f"{settings.frontend_url}/dashboard",
                 secret_key=settings.clerk_secret_key,
             )
-            delivery_note = "Invitation email re-sent."
         except ClerkAPIError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail=f"Failed to re-send invitation email: {exc}",
-            ) from exc
+            logger.warning("Clerk org resend warning: %s", exc)
+
+        await send_team_invite_email(
+            to_email=invite.email,
+            org_name=org.name,
+            inviter_name=_display_name(user, user.email),
+            role=invite.role,  # type: ignore[arg-type]
+            share_link=f"{settings.frontend_url.rstrip('/')}/sign-up",
+            logo_url=org.logo_url,
+            invite_code=invite.invite_token,
+        )
+        delivery_note = "Invitation email re-sent with invitation code."
 
     return PendingInviteResponse(
         id=invite.id,
@@ -814,6 +856,8 @@ async def resend_invite(
         invited_by=_display_name(user, user.email),
         dev_share_link=dev_share_link,
         delivery_note=delivery_note,
+        invite_code=invite.invite_token,
+        expires_at=invite.invite_expires_at,
     )
 
 
@@ -928,3 +972,166 @@ async def decline_invitation(
     pending.status = "declined"
     db.add(pending)
     await db.commit()
+
+
+# ---------------------------------------------------------------------------
+# GET /team/invite/validate?token=  (unauthenticated)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/invite/validate")
+async def validate_invite_token(
+    token: str,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Validate a shareable invite token without requiring authentication.
+
+    Called by the frontend during the sign-up 'invite-code' stage to
+    preview which organization the token grants access to before the
+    user commits.
+
+    Returns:
+        org_name: display name of the inviting org
+        org_id:   UUID of the org (needed for POST /team/invite/redeem)
+        invited_email: the email the invite was addressed to (may be null
+                       for org-wide tokens in future)
+        is_expired: true if invite_expires_at is in the past
+    """
+    search_tokens = _normalize_token_variations(token)
+    invite_result = await db.execute(
+        select(OrganizationMember, Organization)
+        .join(Organization, Organization.id == OrganizationMember.org_id)
+        .where(
+            OrganizationMember.invite_token.in_(search_tokens),
+            OrganizationMember.status == "pending",
+        )
+    )
+    row = invite_result.first()
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Invalid or already used invite code.",
+        )
+
+    invite, org = row
+    is_expired = False
+    if invite.invite_expires_at is not None:
+        is_expired = invite.invite_expires_at < datetime.now(timezone.utc)
+
+    return {
+        "org_name": org.name,
+        "org_id": str(org.id),
+        "invited_email": invite.email,
+        "is_expired": is_expired,
+        "role": invite.role,
+    }
+
+
+# ---------------------------------------------------------------------------
+# POST /team/invite/redeem  (authenticated)
+# ---------------------------------------------------------------------------
+
+
+@router.post("/invite/redeem", response_model=TeamMemberResponse)
+async def redeem_invite_token(
+    body: dict,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> TeamMemberResponse:
+    """Redeem a shareable invite token and join the org.
+
+    The user must already be authenticated (Clerk session) when they
+    call this endpoint. This is triggered from the 'invite-code' stage
+    of sign-up or the /onboarding route after the user enters their code.
+
+    Steps:
+      1. Look up the pending OrganizationMember by token.
+      2. Check expiry & workspace limit.
+      3. Bind user_id + flip status to 'active'.
+      4. Set user.active_org_id.
+    """
+    token: str = body.get("token", "")
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="invite_token is required.",
+        )
+
+    search_tokens = _normalize_token_variations(token)
+    invite_result = await db.execute(
+        select(OrganizationMember)
+        .where(
+            OrganizationMember.invite_token.in_(search_tokens),
+            OrganizationMember.status == "pending",
+        )
+    )
+    invite = invite_result.scalar_one_or_none()
+    if invite is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Invalid or already used invite code.",
+        )
+
+    # Check expiry
+    if invite.invite_expires_at is not None:
+        if invite.invite_expires_at < datetime.now(timezone.utc):
+            raise HTTPException(
+                status_code=status.HTTP_410_GONE,
+                detail="This invite code has expired.",
+            )
+
+    # Check workspace limit
+    active_count = len((await db.execute(
+        select(OrganizationMember)
+        .where(OrganizationMember.user_id == user.id, OrganizationMember.status == "active")
+    )).scalars().all())
+    if active_count >= 3:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="You have reached the maximum limit of 3 workspaces.",
+        )
+
+    # Check if already a member of this org
+    already_member = (await db.execute(
+        select(OrganizationMember).where(
+            OrganizationMember.org_id == invite.org_id,
+            OrganizationMember.user_id == user.id,
+            OrganizationMember.status == "active",
+        )
+    )).scalar_one_or_none()
+    if already_member is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="You are already a member of this workspace.",
+        )
+
+    # Bind user to invite and activate
+    invite.user_id = user.id
+    invite.status = "active"
+    invite.invite_token = None  # consume — can't be reused
+    db.add(invite)
+    await db.flush()
+
+    user.active_org_id = invite.org_id
+    db.add(user)
+    await db.commit()
+    await db.refresh(invite)
+    await db.refresh(user)
+
+    # Resolve owner for response
+    active_memberships = (await db.execute(
+        select(OrganizationMember)
+        .where(OrganizationMember.org_id == invite.org_id, OrganizationMember.status == "active")
+        .order_by(OrganizationMember.created_at.asc(), OrganizationMember.id.asc())
+    )).scalars().all()
+    owner_id = _resolve_owner(active_memberships)
+
+    return TeamMemberResponse(
+        id=invite.id,
+        name=_display_name(user, user.email),
+        email=invite.email,
+        role=_role_for_display(invite, owner_id),  # type: ignore[arg-type]
+        status=invite.status,  # type: ignore[arg-type]
+        last_active=user.last_active_at,
+        is_you=True,
+    )

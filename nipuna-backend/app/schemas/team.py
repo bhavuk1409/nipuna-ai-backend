@@ -38,13 +38,10 @@ class PendingInviteResponse(BaseModel):
     role: Literal["admin", "member", "viewer"]
     sent_at: datetime
     invited_by: str
-    # In dev mode (manual_* orgs), Clerk can't send a real email.
-    # The resend endpoint returns a self-serve share link the inviter
-    # can manually send via their own channel (Slack, etc.). In prod
-    # (real Clerk orgs) this is always null.
     dev_share_link: str | None = None
-    # Human-readable note explaining why a real email was/wasn't sent.
     delivery_note: str | None = None
+    invite_code: str | None = None
+    expires_at: datetime | None = None
 
 
 class InviteMemberRequest(BaseModel):

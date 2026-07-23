@@ -30,6 +30,7 @@ async def send_team_invite_email(
     role: str,
     share_link: str,
     logo_url: str | None = None,
+    invite_code: str | None = None,
     from_email: str = "alerts@nipunaai.in",
 ) -> bool:
     """Send a workspace-invitation email.
@@ -37,11 +38,9 @@ async def send_team_invite_email(
     For existing Nipuna AI users, `share_link` points to the dashboard
     where they'll find the invitation in their notification bell.
     For new users, it points to the `/invite/accept` page.
+    Includes the `invite_code` when available (valid for 7 days).
 
     Returns True if the Resend API call succeeded, False if it failed.
-    We *don't* raise — the team router treats email delivery as
-    best-effort and always returns the share link in the response so
-    the inviter can copy it manually.
     """
     subject = f"You've been invited to join {org_name} on Nipuna AI"
 
@@ -97,6 +96,29 @@ async def send_team_invite_email(
     else:
         org_logo_html = ""
 
+
+    invite_code_html = ""
+    if invite_code:
+        invite_code_html = f"""
+          <!-- Invitation Code Card -->
+          <tr>
+            <td style="padding:20px 36px 0;">
+              <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#fafaf9;border:1px solid #e5e7e6;border-radius:12px;overflow:hidden;">
+                <tr>
+                  <td style="padding:20px;text-align:center;">
+                    <p style="margin:0 0 8px;font-size:10px;font-weight:700;color:#7a7f7e;letter-spacing:0.12em;text-transform:uppercase;">Invitation Code</p>
+                    <div style="font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;font-size:22px;font-weight:800;color:#111111;letter-spacing:3px;margin:4px 0 8px;background:#ffffff;border:1px solid #d9dcdb;padding:12px 20px;border-radius:8px;display:inline-block;word-break:break-all;">
+                      {invite_code}
+                    </div>
+                    <p style="margin:8px 0 0;font-size:11.5px;color:#8a8f8e;line-height:1.4;">
+                      Single-use code &bull; Valid for 7 days
+                    </p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+        """
 
     html = f"""
 <!DOCTYPE html>
@@ -155,6 +177,8 @@ async def send_team_invite_email(
               </table>
             </td>
           </tr>
+
+          {invite_code_html}
 
           <!-- CTA Buttons -->
           <tr>

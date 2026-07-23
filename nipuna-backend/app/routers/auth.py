@@ -220,6 +220,8 @@ async def register_workspace(
                 plan="free",
                 seats_max=5,
                 ai_credits=100,
+                industry=body.industry or None,
+                team_size=body.team_size or None,
             )
             db.add(org)
             await db.flush()  # get org.id without committing yet
@@ -256,6 +258,16 @@ async def register_workspace(
                 "register_workspace: recovered from concurrent insertion of Organization clerk_org_id=%s",
                 body.clerk_org_id,
             )
+    else:
+        # Org already exists — update name and persist industry/team_size if
+        # they were not previously recorded (e.g. created by the Clerk webhook
+        # before the onboarding form was submitted).
+        org.name = body.name
+        if body.industry and not org.industry:
+            org.industry = body.industry
+        if body.team_size and not org.team_size:
+            org.team_size = body.team_size
+        db.add(org)
 
     # Look up or create the OrganizationMember row.
     from sqlalchemy.exc import IntegrityError as _MemberIntegrityError

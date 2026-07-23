@@ -1,3 +1,4 @@
+import re
 from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,6 +14,26 @@ from app.models.user import User
 from app.schemas.dashboard import DashboardOverview, RecentActivity
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
+
+
+def _clean_description(msg: Message) -> str:
+    content = msg.content or ""
+    # Strip parenthesized system prompt suffixes (e.g. Please answer concisely...)
+    content = re.sub(r"\s*\([^)]*(?:Please|financial figures|concisely|INR|₹)[^)]*\)", "", content, flags=re.IGNORECASE)
+    content = content.strip()
+
+    if msg.role == "assistant":
+        # Strip generic intro greetings
+        content = re.sub(r"^Hello,?\s*I'm\s+Nipuna\s+AI[^\n.]*[.]?\s*", "", content, flags=re.IGNORECASE)
+        content = re.sub(r"^I\s+can\s+help\s+with\s+[^\n.]*[.]?\s*", "", content, flags=re.IGNORECASE)
+        content = content.strip()
+        if not content:
+            return "AI response provided"
+        return content[:120]
+
+    if not content:
+        return "User query"
+    return content[:120]
 
 
 @router.get("/overview", response_model=DashboardOverview)
@@ -55,14 +76,15 @@ async def get_dashboard_overview(
         .where(Conversation.org_id == org.id)
         .options(joinedload(Message.conversation))
         .order_by(Message.created_at.desc())
-        .limit(10)
+        .limit(20)
     )
     recent_messages = recent_messages_result.scalars().all()
 
     recent_activity = [
         RecentActivity(
             type="chat",
-            description=msg.content[:120] if msg.content else "",
+            description=_clean_description(msg),
+            created_at=msg.created_at,
         )
         for msg in recent_messages
     ]
