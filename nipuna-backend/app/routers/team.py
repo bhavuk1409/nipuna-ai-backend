@@ -412,20 +412,18 @@ async def create_invite(
     settings = get_settings()
     is_dev_org = org.clerk_org_id.startswith("manual_")
 
-    # Best-effort Clerk lookup. If the email is already a Clerk user,
-    # we send them BOTH an in-app notification (synthetic bell) AND a
-    # Resend email so they are immediately alerted.
+    # Primary check via Clerk: check if the user exists on Nipuna AI via Clerk API
     existing_clerk_user_id: str | None = None
-    if existing_user is None:
-        try:
-            existing_clerk_user_id = await lookup_clerk_user_by_email(
-                email=body.email,
-                secret_key=settings.clerk_secret_key,
-            )
-        except ClerkAPIError as exc:
-            logger.warning("lookup_clerk_user_by_email warning: %s", exc)
+    try:
+        existing_clerk_user_id = await lookup_clerk_user_by_email(
+            email=body.email,
+            secret_key=settings.clerk_secret_key,
+        )
+    except ClerkAPIError as exc:
+        logger.warning("lookup_clerk_user_by_email warning for %s: %s", body.email, exc)
 
-    is_existing_user = (existing_user is not None) or (existing_clerk_user_id is not None)
+    # User is on Nipuna AI if found via Clerk API OR local DB
+    is_existing_user = (existing_clerk_user_id is not None) or (existing_user is not None)
 
     # Generate clean, professional 8-character token & set 7-day expiration
     generated_token = _generate_invite_token()
