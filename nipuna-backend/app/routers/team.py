@@ -374,7 +374,7 @@ async def create_invite(
     # `existing_member` check below still uses the unique
     # (org_id, user_id) index.
     existing_user_res = await db.execute(
-        select(User).where(User.email == body.email).order_by(User.created_at.asc())
+        select(User).where(func.lower(User.email) == body.email.lower()).order_by(User.created_at.asc())
     )
     existing_user = existing_user_res.scalars().first()
     if existing_user is not None:
@@ -416,23 +416,16 @@ async def create_invite(
     # we send them BOTH an in-app notification (synthetic bell) AND a
     # Resend email so they are immediately alerted.
     existing_clerk_user_id: str | None = None
-    if existing_user is not None:
-        # Already a Nipuna AI user — the synthetic notification will
-        # surface the invite in their bell. We ALSO send a Resend
-        # email so they're notified even if they're not actively
-        # checking the app.
-        pass
-    else:
+    if existing_user is None:
         try:
             existing_clerk_user_id = await lookup_clerk_user_by_email(
                 email=body.email,
                 secret_key=settings.clerk_secret_key,
             )
         except ClerkAPIError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail=f"Could not look up the invitee: {exc}",
-            ) from exc
+            logger.warning("lookup_clerk_user_by_email warning: %s", exc)
+
+    is_existing_user = (existing_user is not None) or (existing_clerk_user_id is not None)
 
     # Generate clean, professional 8-character token & set 7-day expiration
     generated_token = _generate_invite_token()
@@ -443,11 +436,11 @@ async def create_invite(
 
     sign_up_url = f"{settings.frontend_url.rstrip('/')}/sign-up"
 
-    if existing_user is not None:
+    if is_existing_user:
         # Existing Nipuna AI user: redirect email Accept button to sign-up / dashboard.
         # DO NOT send invite_code in email — an in-app invitation pop-up handles it directly.
         logger.info(
-            "create_invite: existing user %s; sending email without code (in-app pop-up active)",
+            "create_invite: user %s is already on Nipuna AI; sending email without code (in-app pop-up active)",
             body.email,
         )
         await send_team_invite_email(
@@ -459,20 +452,21 @@ async def create_invite(
             logo_url=org.logo_url,
             invite_code=None,  # Existing user does not receive code
         )
-    elif existing_user is None and existing_clerk_user_id is None and not is_dev_org:
-        # New user: send invitation email with 6-digit code and pre-filled sign-up link
+    else:
+        # New user (not on Nipuna AI): send invitation email with 6-digit code and pre-filled sign-up link
         new_user_share_link = f"{sign_up_url}?invite_code={generated_token}"
-        try:
-            await send_clerk_org_invitation(
-                clerk_org_id=org.clerk_org_id,
-                email=body.email,
-                role=body.role,
-                inviter_user_id=user.clerk_user_id,
-                redirect_url=new_user_share_link,
-                secret_key=settings.clerk_secret_key,
-            )
-        except ClerkAPIError as exc:
-            logger.warning("Clerk org invitation warning: %s", exc)
+        if not is_dev_org:
+            try:
+                await send_clerk_org_invitation(
+                    clerk_org_id=org.clerk_org_id,
+                    email=body.email,
+                    role=body.role,
+                    inviter_user_id=user.clerk_user_id,
+                    redirect_url=new_user_share_link,
+                    secret_key=settings.clerk_secret_key,
+                )
+            except ClerkAPIError as exc:
+                logger.warning("Clerk org invitation warning: %s", exc)
 
         await send_team_invite_email(
             to_email=body.email,
@@ -482,21 +476,6 @@ async def create_invite(
             share_link=new_user_share_link,
             logo_url=org.logo_url,
             invite_code=generated_token,  # New user receives 6-digit code
-        )
-    elif is_dev_org and existing_clerk_user_id is None and existing_user is None:
-        new_user_share_link = f"{sign_up_url}?invite_code={generated_token}"
-        logger.info(
-            "create_invite: dev org %s (clerk_org_id=%s); emailing share link to %s",
-            org.id, org.clerk_org_id, body.email,
-        )
-        await send_team_invite_email(
-            to_email=body.email,
-            org_name=org.name,
-            inviter_name=_display_name(user, user.email),
-            role=body.role,
-            share_link=new_user_share_link,
-            logo_url=org.logo_url,
-            invite_code=generated_token,
         )
 
     # Bind to a User if we already have one (the email matched an
