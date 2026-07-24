@@ -67,7 +67,6 @@ from app.config import get_settings
 from app.services.clerk import (
     ClerkAPIError,
     lookup_clerk_user_by_email,
-    send_clerk_org_invitation,
 )
 from app.services.notifications.team_invite_email import (
     build_dev_share_link,
@@ -428,9 +427,6 @@ async def create_invite(
     # Generate clean, professional 8-character token & set 7-day expiration
     generated_token = _generate_invite_token()
     expires_at = datetime.now(timezone.utc) + timedelta(days=7)
-
-    # Build the dashboard link for existing users to find their notification
-    dashboard_link = f"{settings.frontend_url.rstrip('/')}/dashboard"
 
     sign_up_url = f"{settings.frontend_url.rstrip('/')}/sign-up"
     sign_in_url = f"{settings.frontend_url.rstrip('/')}/sign-in"
