@@ -127,71 +127,6 @@ async def lookup_clerk_user_by_email(
     return user_id
 
 
-async def send_clerk_org_invitation(
-    clerk_org_id: str,
-    email: str,
-    role: str,
-    inviter_user_id: str,
-    redirect_url: str,
-    secret_key: str | None,
-) -> dict[str, Any]:
-    """Send a real Clerk organization invitation email.
-
-    Maps our internal role (`admin` / `member` / `viewer`) to Clerk's
-    role strings (`org:admin` / `org:member`). Clerk has no `org:viewer`,
-    so `viewer` is downgraded to `org:member` at the Clerk layer; the
-    membership-created webhook handler (`app/routers/auth.py:217`)
-    already preserves the original viewer role on the User row when
-    it sees `org:member` arrive.
-
-    Returns the raw Clerk response payload (the new invitation record).
-    Raises `ClerkAPIError` on any non-2xx.
-    """
-    if not secret_key:
-        raise ClerkAPIError(
-            "Clerk secret key is not configured; cannot send invitation email."
-        )
-
-    clerk_role = _to_clerk_role(role)
-    body = {
-        "email_address": email.strip().lower(),
-        "role": clerk_role,
-        "inviter_user_id": inviter_user_id,
-        "redirect_url": redirect_url,
-        # `public_metadata` lets us tag the invitation with our own
-        # internal invite id once the accept handler runs. Not used
-        # yet but cheap to send.
-        "public_metadata": {"nipuna_invite_role": role},
-    }
-
-    try:
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-            resp = await client.post(
-                f"{_CLERK_API_BASE}/organizations/{clerk_org_id}/invitations",
-                json=body,
-                headers=_headers(secret_key),
-            )
-    except httpx.HTTPError as exc:
-        logger.warning(
-            "Clerk org invitation transport error for org=%s email=%s: %s",
-            clerk_org_id, email, exc,
-        )
-        raise ClerkAPIError("Clerk invitation request failed.") from exc
-
-    if not resp.is_success:
-        # Clerk sometimes returns useful error messages in the body —
-        # log them so we can debug delivery issues from the API logs.
-        logger.warning(
-            "Clerk org invitation %s for org=%s email=%s: %s",
-            resp.status_code, clerk_org_id, email, resp.text[:400],
-        )
-        raise ClerkAPIError(
-            f"Clerk invitation was rejected ({resp.status_code})."
-        )
-
-    return resp.json()
-
-
 async def get_clerk_organization(
     clerk_org_id: str,
     secret_key: str | None,
@@ -235,7 +170,6 @@ def _to_clerk_role(role: str) -> str:
 __all__ = [
     "ClerkAPIError",
     "lookup_clerk_user_by_email",
-    "send_clerk_org_invitation",
     "get_clerk_organization",
 ]
 
