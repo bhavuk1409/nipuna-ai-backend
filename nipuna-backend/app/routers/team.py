@@ -411,18 +411,23 @@ async def create_invite(
     settings = get_settings()
     is_dev_org = org.clerk_org_id.startswith("manual_")
 
-    # Primary check via Clerk: check if the user exists on Nipuna AI via Clerk API
+    # Check if the user is on Nipuna AI via Clerk API (single source of truth)
     existing_clerk_user_id: str | None = None
     try:
         existing_clerk_user_id = await lookup_clerk_user_by_email(
             email=body.email,
             secret_key=settings.clerk_secret_key,
         )
+        logger.info(
+            "create_invite: Clerk lookup for %s → %s",
+            body.email,
+            "FOUND (existing user)" if existing_clerk_user_id else "NOT FOUND (new user)",
+        )
     except ClerkAPIError as exc:
         logger.warning("lookup_clerk_user_by_email warning for %s: %s", body.email, exc)
 
-    # User is on Nipuna AI if found via Clerk API OR local DB
-    is_existing_user = (existing_clerk_user_id is not None) or (existing_user is not None)
+    # ONLY use Clerk API result — Clerk is the source of truth for user existence
+    is_existing_user = existing_clerk_user_id is not None
 
     # Generate clean, professional 8-character token & set 7-day expiration
     generated_token = _generate_invite_token()
