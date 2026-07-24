@@ -755,61 +755,44 @@ async def resend_invite(
     await db.commit()
     await db.refresh(invite)
 
-    dev_share_link: str | None = None
     delivery_note: str | None = None
+    sign_up_url = f"{settings.frontend_url.rstrip('/')}/sign-up"
+    sign_in_url = f"{settings.frontend_url.rstrip('/')}/sign-in"
 
-    if invitee_user is not None:
-        dashboard_link = f"{settings.frontend_url.rstrip('/')}/dashboard"
-        await send_team_invite_email(
-            to_email=invite.email,
-            org_name=org.name,
-            inviter_name=_display_name(user, user.email),
-            role=invite.role,  # type: ignore[arg-type]
-            share_link=dashboard_link,
-            logo_url=org.logo_url,
-            invite_code=invite.invite_token,
-        )
-        delivery_note = "Invitation email re-sent with invitation code."
-    elif is_dev_org:
-        dev_share_link = build_dev_share_link(
-            frontend_url=settings.frontend_url,
-            org_id=str(org.id),
+    existing_clerk_user_id: str | None = None
+    try:
+        existing_clerk_user_id = await lookup_clerk_user_by_email(
             email=invite.email,
+            secret_key=settings.clerk_secret_key,
         )
-        await send_team_invite_email(
-            to_email=invite.email,
-            org_name=org.name,
-            inviter_name=_display_name(user, user.email),
-            role=invite.role,  # type: ignore[arg-type]
-            share_link=dev_share_link,
-            logo_url=org.logo_url,
-            invite_code=invite.invite_token,
-        )
-        delivery_note = "Dev mode: Invitation email re-sent with invitation code."
-    else:
-        # Real Clerk org, new email — re-fire invitation and send Resend email with invite code
-        try:
-            await send_clerk_org_invitation(
-                clerk_org_id=org.clerk_org_id,
-                email=invite.email,
-                role=invite.role,  # type: ignore[arg-type]
-                inviter_user_id=user.clerk_user_id,
-                redirect_url=f"{settings.frontend_url}/dashboard",
-                secret_key=settings.clerk_secret_key,
-            )
-        except ClerkAPIError as exc:
-            logger.warning("Clerk org resend warning: %s", exc)
+    except ClerkAPIError as exc:
+        logger.warning("lookup_clerk_user_by_email warning for %s: %s", invite.email, exc)
 
+    is_existing = (invite.user_id is not None) or (existing_clerk_user_id is not None)
+
+    if is_existing:
         await send_team_invite_email(
             to_email=invite.email,
             org_name=org.name,
             inviter_name=_display_name(user, user.email),
             role=invite.role,  # type: ignore[arg-type]
-            share_link=f"{settings.frontend_url.rstrip('/')}/sign-up",
+            share_link=sign_in_url,
+            logo_url=org.logo_url,
+            invite_code=None,
+        )
+        delivery_note = "Resend email re-sent to existing user (points to sign-in page, no code)."
+    else:
+        new_user_share_link = f"{sign_up_url}?invite_code={invite.invite_token}"
+        await send_team_invite_email(
+            to_email=invite.email,
+            org_name=org.name,
+            inviter_name=_display_name(user, user.email),
+            role=invite.role,  # type: ignore[arg-type]
+            share_link=new_user_share_link,
             logo_url=org.logo_url,
             invite_code=invite.invite_token,
         )
-        delivery_note = "Invitation email re-sent with invitation code."
+        delivery_note = "Resend email re-sent to new user with invitation code."
 
     return PendingInviteResponse(
         id=invite.id,
