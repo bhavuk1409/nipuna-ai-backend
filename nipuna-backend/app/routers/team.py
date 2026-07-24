@@ -350,6 +350,45 @@ async def _jit_sync_org_logo(org: Organization, secret_key: str, db: AsyncSessio
 
 
 
+@router.get("/invite-code/{code}", response_model=dict)
+async def lookup_invite_code(
+    code: str,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Public endpoint — validate an invite code and return org info.
+
+    Used by the 'enter an invite code' modal on the dashboard banner.
+    Does NOT require authentication so a logged-out or org-less user
+    can validate the code before being redirected to sign-up.
+    """
+    now = datetime.now(timezone.utc)
+    invite_result = await db.execute(
+        select(OrganizationMember).where(
+            OrganizationMember.invite_token == code.strip().upper(),
+            OrganizationMember.status == "pending",
+            OrganizationMember.invite_expires_at > now,
+        )
+    )
+    invite = invite_result.scalar_one_or_none()
+    if invite is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Invalid or expired invite code. Please check the code and try again.",
+        )
+
+    # Fetch org name for display
+    org_result = await db.execute(select(Organization).where(Organization.id == invite.org_id))
+    org = org_result.scalar_one_or_none()
+
+    return {
+        "valid": True,
+        "org_name": org.name if org else "your team",
+        "email": invite.email,
+        "role": invite.role,
+        "invite_code": code.strip().upper(),
+    }
+
+
 @router.post(
     "/invites",
     response_model=PendingInviteResponse,
