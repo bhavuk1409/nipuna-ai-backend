@@ -32,18 +32,21 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # CONCURRENTLY is not allowed inside a transaction. Alembic's
-    # default is per-migration transactional; this is a no-op in
-    # that mode (the operator uses ``alembic --sql`` and runs the
-    # SQL by hand). When alembic is invoked with
-    # ``transaction_per_ddl=True`` (the env we don't use) the
-    # concurrent index is the only way.
-    op.execute(
-        "CREATE INDEX CONCURRENTLY IF NOT EXISTS "
-        "ix_vector_chunks_embedding_hnsw "
-        "ON vector_chunks "
-        "USING hnsw (embedding vector_cosine_ops)"
-    )
+    try:
+        with op.get_context().autocommit_block():
+            op.execute(
+                "CREATE INDEX CONCURRENTLY IF NOT EXISTS "
+                "ix_vector_chunks_embedding_hnsw "
+                "ON vector_chunks "
+                "USING hnsw (embedding vector_cosine_ops)"
+            )
+    except Exception:
+        op.execute(
+            "CREATE INDEX IF NOT EXISTS "
+            "ix_vector_chunks_embedding_hnsw "
+            "ON vector_chunks "
+            "USING hnsw (embedding vector_cosine_ops)"
+        )
 
 
 def downgrade() -> None:
